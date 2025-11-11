@@ -4,7 +4,8 @@ This file tracks current and background tasks. Update it as you start new work o
 
 ## Current Focus
 
-**[simde-library](tasks/active/simde-library-task.md)
+**[rdc-therock](tasks/active/rdc-therock-task.md)** - Priority 1
+Adapt RDC to build for manylinux in TheRock - creating portable build with proper dependency isolation
 
 <!-- Example:
 **[cmake-refactor](tasks/active/cmake-refactor.md)** - Priority 1
@@ -41,6 +42,8 @@ Then remove it from this list.
 ## Recently Completed
 
 <!-- Keep a short list of recently completed tasks for reference -->
+
+- **[simde-library](tasks/completed/simde-library-task.md)** (2025-11-11) - Added SIMDe third-party library to TheRock
 
 <!-- Example:
 - **build-system-refactor** (2025-11-05) - Completed CMake modernization

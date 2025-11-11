@@ -151,3 +151,4 @@ git log -1 --stat
 - Note that TheRock is a super-project. The builds under the submodules (like rocm-systems) are sub-projects. Since dependency management is handled by the super-project, you want to refer to those build rules. For example, in the case of ROCR-Runtime and clr, see the `core/CMakeLists.txt` file. This is documented in docs/development/build_system.md.
 - Never do `git push` without explicit authorization.
 - Do not amend commits without explicit authorization. Stage changes and ask for reviews before commiting.
+- Note for future: GitHub issue references should use short form #NNNN instead of full URLs in commit messages.
