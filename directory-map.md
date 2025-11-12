@@ -29,6 +29,11 @@ Document key submodules if they're frequently edited:
 - **llvm-project:** `/develop/therock/compiler/amd-llvm`
 - **hipify:** `/develop/therock/compiler/hipify`
 
+### Frameworks:
+
+* JAX: `/develop/jax`
+* XLA: `/develop/xla`
+
 ## Build Trees
 
 ### Active Builds
