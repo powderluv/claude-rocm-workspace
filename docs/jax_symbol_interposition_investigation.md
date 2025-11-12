@@ -266,7 +266,7 @@ Bazel has a catastrophic default behavior: `cc_test` defaults to **dynamic linki
 3. **Dumps everything into global namespace** - LLVM symbols everywhere
 4. **Makes symbols interpose with everything** - Including system libraries
 
-This "feature" was designed to speed up test iteration in Google's monorepo, but for everyone else with external dependencies like LLVM, it's been a source of torture for years.
+This feature was designed to speed up test iteration in Google's monorepo, but for projects with external dependencies like LLVM, it has caused persistent issues.
 
 ### The Symptom
 
@@ -284,7 +284,7 @@ bazel test //...
 Add to your `.bazelrc` or command line:
 
 ```bash
-# Disable Bazel's brain-damaged test dynamic linking
+# Disable Bazel's problematic test dynamic linking
 build --dynamic_mode=off
 test --dynamic_mode=off
 ```
