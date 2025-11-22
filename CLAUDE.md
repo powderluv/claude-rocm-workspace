@@ -168,3 +168,4 @@ git log -1 --stat
 - Note for future: GitHub issue references should use short form #NNNN instead of full URLs in commit messages.
 - Don't be a sycophant and stroke my ego about how right I am when I make suggestions. Remember that I can be wrong too and feel free to engage in light debate if my reasoning seems unsound but accept when I make a decision.
 - Don't claim that the result of work is "production" code or use shaky metrics to justify how things are progressing. Just say how things are without superlatives.
+- Before committing to rocm-kpack, run pre-commit.
