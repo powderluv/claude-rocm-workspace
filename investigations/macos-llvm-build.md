@@ -137,9 +137,53 @@ Device libraries in `tools/rocm-device-libs/amdgcn/bitcode/`:
 - `oclc_isa_version_*.bc` - ISA-specific options
 - `hip.bc` - HIP-specific library
 
+## Phase 1.2: hipcc macOS Port - COMPLETE
+
+Successfully ported hipcc to macOS with the following changes:
+
+### Changes Made
+
+1. **`src/utils.cpp`** - Added macOS `_NSGetExecutablePath()` support
+2. **`src/hipBin_base.h`** - Added `macos` to `OsType` enum and detection
+3. **`src/hipBin_util.h`** - Added macOS headers
+4. **`src/hipBin_amd.h`** - Skip `rocm_agent_enumerator` on macOS, fix linker flags
+5. **`CMakeLists.txt`** - Don't link libstdc++fs on macOS (libc++ has built-in filesystem)
+
+### Build Commands
+
+```bash
+# Configure hipcc for macOS
+cd /Users/setupuser/github/TheRock/build-hipcc-macos
+cmake ../compiler/amd-llvm/amd/hipcc -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+# Build
+ninja
+```
+
+### Usage on macOS
+
+```bash
+export HIP_CLANG_PATH=/path/to/build-llvm-macos/bin
+export ROCM_PATH=/path/to/build-llvm-macos
+export HIP_PATH=/path/to/build-llvm-macos
+
+# For device-only compilation without C++ stdlib requirements:
+hipcc --rocm-path=/path/to/rocm-mock \
+      --offload-arch=gfx942 \
+      -nogpuinc \
+      --cuda-device-only \
+      -c kernel.hip -o kernel.o
+```
+
+### Known Limitations
+
+1. **No local GPU detection** - Must specify `--offload-arch=gfxNNN` explicitly
+2. **C++ stdlib not available for device code** - Use `-nogpuinc` for kernels with no stdlib deps
+3. **No host linking** - Can only do device-only compilation (for remote execution)
+
 ## Next Steps
 
-1. Set up proper HIP headers with C++ stdlib support
-2. Build hipcc wrapper for easier compilation
+1. Set up proper HIP headers with C++ stdlib support for full HIP compilation
+2. Create macOS-specific hipcc wrapper script for convenience
 3. Integrate with TheRock build system
-4. Test code object compatibility with remote Linux GPU worker
+4. Test code object compatibility with remote Linux GPU worker (already verified in Phase 1.1)

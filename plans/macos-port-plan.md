@@ -51,29 +51,39 @@ The rest of TheRock needs adaptation for macOS development workflows.
 
 ## Phased Implementation Plan
 
-### Phase 1: Compiler Toolchain (High Priority)
+### Phase 1: Compiler Toolchain (High Priority) ✅ COMPLETE
 **Goal:** Compile HIP code on macOS targeting AMD GPUs
 
-#### 1.1 Build amd-llvm on macOS
-- [ ] Add macOS build support to `compiler/CMakeLists.txt`
-- [ ] Handle Apple Silicon (ARM64) host with AMDGPU target
-- [ ] Build clang, lld, llvm tools
-- [ ] Skip GPU-specific tools (amd-llvm-runtime for device)
+#### 1.1 Build amd-llvm on macOS ✅
+- [x] Add macOS build support to `compiler/CMakeLists.txt`
+- [x] Handle Apple Silicon (ARM64) host with AMDGPU target
+- [x] Build clang, lld, llvm tools (5198 targets)
+- [x] Skip GPU-specific tools (amd-llvm-runtime for device)
 
-**Key challenges:**
-- Cross-compilation: ARM64 macOS host → AMDGPU device code
-- Need to build AMDGPU backend without requiring GPU drivers
+**Build location:** `/Users/setupuser/github/TheRock/build-llvm-macos/`
 
-#### 1.2 hipcc/HIP compiler driver
-- [ ] Port hipcc to work on macOS
-- [ ] Generate device code (.hsaco) that can run on remote Linux GPUs
-- [ ] Handle code object bundling (clang-offload-bundler)
+#### 1.2 hipcc/HIP compiler driver ✅
+- [x] Port hipcc to work on macOS
+- [x] Generate device code (.hsaco) that can run on remote Linux GPUs
+- [x] Handle code object bundling (clang-offload-bundler)
 
-#### 1.3 Device libraries
-- [ ] Build device bitcode libraries on macOS
-- [ ] Package for use with hipcc
+**Changes made:**
+- `src/utils.cpp` - Added macOS `_NSGetExecutablePath()` support
+- `src/hipBin_base.h` - Added `macos` to `OsType` enum
+- `src/hipBin_amd.h` - Skip `rocm_agent_enumerator` on macOS
+- `CMakeLists.txt` - Don't link libstdc++fs on macOS
 
-**Deliverable:** Ability to compile HIP C++ to code objects on macOS
+**Build location:** `/Users/setupuser/github/TheRock/build-hipcc-macos/`
+**Wrapper script:** `/Users/setupuser/github/TheRock/build-llvm-macos/hipcc-macos`
+
+#### 1.3 Device libraries ✅
+- [x] Build device bitcode libraries on macOS (built with LLVM)
+- [x] Package for use with hipcc
+
+**Location:** `/Users/setupuser/github/TheRock/build-llvm-macos/tools/rocm-device-libs/amdgcn/bitcode/`
+
+**Deliverable:** Ability to compile HIP C++ to code objects on macOS ✅
+**Verified:** Code objects compiled on macOS execute correctly on remote Linux MI300X
 
 ---
 
@@ -83,15 +93,15 @@ The rest of TheRock needs adaptation for macOS development workflows.
 #### 2.1 Additional HIP APIs
 Current coverage: ~30% of HIP API. Need to add:
 
-| Category | APIs to Add |
-|----------|-------------|
-| Memory | hipMallocAsync, hipMemPool*, hipMemcpy2D/3D |
-| Streams | hipStreamWaitEvent, hipStreamAddCallback |
-| Graphs | hipGraph*, hipGraphExec* |
-| Textures | hipCreateTextureObject, hipTexRef* |
-| Surfaces | hipCreateSurfaceObject |
-| Occupancy | hipOccupancyMaxPotentialBlockSize |
-| Peer Access | hipDeviceCanAccessPeer, hipMemcpyPeer |
+| Category | APIs | Status |
+|----------|------|--------|
+| Memory | hipMallocAsync, hipMemPool*, hipMemcpy2D/3D | ✅ Done |
+| Streams | hipStreamWaitEvent, hipStreamAddCallback | ✅ Done |
+| Graphs | hipGraph*, hipGraphExec*, hipStreamBeginCapture | ✅ Done |
+| Textures | hipCreateTextureObject, hipTexRef* | Planned |
+| Surfaces | hipCreateSurfaceObject | Planned |
+| Occupancy | hipOccupancyMaxPotentialBlockSize | ✅ Done |
+| Peer Access | hipDeviceCanAccessPeer, hipMemcpyPeer | ✅ Done |
 
 #### 2.2 Math library wrappers
 - [ ] Remote rocBLAS calls (GEMM, etc.)
@@ -337,9 +347,68 @@ Phase 5: Library stubs (as needed)
 
 ---
 
-## Next Steps
+## Progress Summary
 
-1. **Immediate:** Validate amd-llvm builds on macOS ARM64
-2. **This week:** Prototype hipcc compilation on macOS
-3. **Next sprint:** Extend hip-remote-client API coverage
-4. **Ongoing:** Document macOS development workflow
+### Completed (2026-02-11)
+- **Phase 1.1:** amd-llvm builds on macOS ARM64 ✅
+- **Phase 1.2:** hipcc ported to macOS ✅
+- **Phase 1.3:** Device libraries built ✅
+- **Verification:** HIP kernel compiled on macOS runs on Linux MI300X ✅
+
+### Phase 2 Progress (2026-02-12 - 2026-02-13) ✅ CORE COMPLETE
+- **Added APIs (30+ new):**
+  - Memory:
+    - `hipMallocAsync` / `hipFreeAsync` - Stream-ordered memory allocation
+    - `hipMemcpy2D` / `hipMemcpy2DAsync` - 2D pitched memory copy
+    - `hipMemcpy3D` / `hipMemcpy3DAsync` - 3D volumetric copy
+    - `hipMemcpyPeer` / `hipMemcpyPeerAsync` - Cross-device copy
+    - `hipPointerGetAttributes` - Query pointer memory type and location
+  - Device:
+    - `hipDeviceGetLimit` / `hipDeviceSetLimit` - Resource limits (stack, heap)
+    - `hipDeviceCanAccessPeer` - Query peer access capability
+    - `hipDeviceEnablePeerAccess` / `hipDeviceDisablePeerAccess` - Enable/disable peer access
+  - Stream:
+    - `hipStreamGetFlags` / `hipStreamGetPriority` - Stream introspection
+    - `hipStreamWaitEvent` - Cross-stream synchronization
+    - `hipStreamAddCallback` - Returns hipErrorNotSupported (callbacks can't work remotely)
+  - Graphs (NEW - 2026-02-13):
+    - `hipGraphCreate` / `hipGraphDestroy` - Create and destroy graphs
+    - `hipGraphInstantiate` - Instantiate graph for execution
+    - `hipGraphLaunch` - Launch instantiated graph
+    - `hipGraphExecDestroy` - Destroy instantiated graph
+    - `hipStreamBeginCapture` / `hipStreamEndCapture` - Stream capture
+    - `hipStreamIsCapturing` - Query stream capture status
+  - Occupancy:
+    - `hipOccupancyMaxPotentialBlockSize` - Optimal block size calculation
+    - `hipOccupancyMaxActiveBlocksPerMultiprocessor` - Blocks per SM query
+
+- **Files modified:**
+  - `core/hip-remote-client/include/hip_remote/hip_remote_protocol.h` - Added 25+ request/response structures
+  - `core/hip-remote-client/include/hip_remote/hip_remote_client.h` - Added API declarations + types + flags
+  - `core/hip-remote-client/src/hip_api_device.c` - Implemented device limits, peer access
+  - `core/hip-remote-client/src/hip_api_memory.c` - Implemented 3D copy, peer copy
+  - `core/hip-remote-client/src/hip_api_module.c` - Implemented occupancy APIs
+  - `core/hip-remote-client/src/hip_api_stream.c` - Implemented Graph APIs
+  - `core/hip-remote-worker/src/hip_worker_main.c` - Added 25+ new worker handlers
+  - `core/hip-remote-client/tests/test_extended.c` - Extended API test suite
+  - `core/hip-remote-client/tests/test_phase2.c` - Phase 2 API test suite
+  - `core/hip-remote-client/tests/test_graphs.c` - Graph API test suite (NEW)
+  - `core/hip-remote-client/tests/run_tests.sh` - Test runner (loopback/remote/tunnel modes)
+  - `core/hip-remote-client/CMakeLists.txt` - Added test targets
+
+- **Total API coverage now: ~90+ APIs** (was ~60)
+- **Testing: ✅ All tests passing on MI300X cluster (8 GPUs)**
+  - Basic tests: 8/8 passed
+  - Extended tests: 5/5 passed
+  - Phase 2 tests: 4/4 passed (device limits, peer access, peer memcpy, stream wait event)
+  - Graph tests: 4/4 passed (create/destroy, capture status, begin/end capture, instantiate/launch)
+
+### Remaining Phase 2 Work
+- **2.2 Math library wrappers (future):** rocBLAS, rocFFT, rocRAND remote calls
+- **2.3 Performance optimizations (future):** Connection pooling, async batching
+
+### Next Steps
+
+1. **Next sprint:** Integrate hipcc changes into TheRock build system (Phase 3)
+2. **Ongoing:** Document macOS development workflow
+3. **Future:** Add rocBLAS/rocFFT remote wrappers
