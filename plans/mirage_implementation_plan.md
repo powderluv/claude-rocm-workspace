@@ -1,22 +1,22 @@
-# Cosmos Implementation Plan (CDNA v1, iOS-Simulator UX)
+# Mirage Implementation Plan (CDNA v1, iOS-Simulator UX)
 
 ## Summary
-- Build a greenfield Cosmos project under `TheRock/cosmos/`, Linux-hosted, that runs unmodified HIP/PyTorch/vLLM applications in containerized simulated nodes, with ROCm userspace anchored on a Cosmos-compatible `libhsakmt` over an `amdgpu_lite`-style device contract and host CPU passthrough.
+- Build a greenfield Mirage project under `TheRock/mirage/`, Linux-hosted, that runs unmodified HIP/PyTorch/vLLM applications in containerized simulated nodes, with ROCm userspace anchored on a Mirage-compatible `libhsakmt` over an `amdgpu_lite`-style device contract and host CPU passthrough.
 - Keep scope fixed to AMD CDNA v1: emulate an MI300X-like system at cluster scale (8+ nodes x 8 GPUs/node), with AMD-only architecture and no NVIDIA backend.
 - Deliver two fidelity modes: functional ISA-correct execution for broad compatibility, plus cycle-accurate mode for selected hot kernel classes (target slowdown budget `<=1000x`).
-- Ship open-source from day 1, with `cosmosctl` + GUI launcher experience modeled after iOS simulator workflows.
+- Ship open-source from day 1, with `miragectl` + GUI launcher experience modeled after iOS simulator workflows.
 - Treat the 6-12 month window as alpha/beta milestones; scope-complete v1 is planned as a longer critical path under current staffing.
 
 ## Key Implementation Changes
 - Repository placement and integration:
-  - All Cosmos source, schemas, tooling, and docs live under `TheRock/cosmos/`.
-  - Cosmos lives in the TheRock monorepo, but it is not built as part of the top-level TheRock CMake/product graph.
-  - Cosmos owns its own packaging, test, and release entry points while reusing monorepo CI infrastructure where helpful.
-  - Runtime contract: Cosmos must be able to create an environment, `pip install` prebuilt ROCm, PyTorch, and vLLM wheels, overlay a Cosmos-compatible `libhsakmt`, and run against those published binaries without requiring a full TheRock source build.
+  - All Mirage source, schemas, tooling, and docs live under `TheRock/mirage/`.
+  - Mirage lives in the TheRock monorepo, but it is not built as part of the top-level TheRock CMake/product graph.
+  - Mirage owns its own packaging, test, and release entry points while reusing monorepo CI infrastructure where helpful.
+  - Runtime contract: Mirage must be able to create an environment, `pip install` prebuilt ROCm, PyTorch, and vLLM wheels, overlay a Mirage-compatible `libhsakmt`, and run against those published binaries without requiring a full TheRock source build.
 - Create a simulator control plane with:
-  - `cosmosctl` CLI (`create-profile`, `boot`, `run`, `attach`, `logs`, `snapshot`, `replay`, `shutdown`).
+  - `miragectl` CLI (`create-profile`, `boot`, `run`, `attach`, `logs`, `snapshot`, `replay`, `shutdown`).
   - Desktop GUI launcher for device/profile selection, boot state, logs, debugger attach, and replay controls.
-  - A daemonized orchestration service (`cosmosd`) exposing gRPC/REST control endpoints used by CLI/GUI/CI.
+  - A daemonized orchestration service (`miraged`) exposing gRPC/REST control endpoints used by CLI/GUI/CI.
 - Define stable public interfaces/types:
   - **Device Profile Schema (YAML/JSON):** GPU count, CU/LDS/register topology, HBM config, xGMI/PCIe fabric, node count, RCCL fabric params, timing-model toggles.
   - **Workload Manifest Schema:** container image, ROCm runtime version pin, launch command, env vars, mounted artifacts, tracing flags.
@@ -24,8 +24,10 @@
   - **Primary ROCm Compatibility Contract:** patched `libhsakmt` speaking an `amdgpu_lite`-style memory/queue/signal/topology interface from C++ userspace.
   - **Fallback Compatibility Contract:** broader KFD/DRM ioctl emulation only for gaps that cannot be absorbed at the `libhsakmt` boundary.
 - Build runtime architecture:
-  - Node execution: one container per simulated node, published ROCm user-space stack plus a Cosmos-supplied `libhsakmt` overlay inside each node.
+  - Node execution: one container per simulated node, published ROCm user-space stack plus a Mirage-supplied `libhsakmt` overlay inside each node.
   - ROCm interface layer: patched `libhsakmt` targets `amdgpu_lite` semantics directly instead of `/dev/kfd` as the primary v1 integration path.
+  - SoC/package model: internal MI355X-class package model with stable identities for compute complexes, HBM stacks, SDMA engines, doorbells, and fabric endpoints.
+  - System visibility strategy: v1 exposes the simulated accelerator through the `libhsakmt` -> `amdgpu_lite` seam, not through host-kernel PCI endpoint emulation; synthetic PCI/sysfs identity is a later compatibility layer if needed.
   - GPU simulation backend: CDNA ISA parser/decoder/executor from GPUOpen specs, wavefront execution semantics, memory/atomics/barrier correctness.
   - Timing backend: pluggable cycle model for selected kernels (GEMM/reduction/collective primitives) with hardware calibration hooks.
   - Cluster model: multi-node virtual fabric with configurable latency/bandwidth/contention for RCCL and distributed training.
@@ -38,38 +40,87 @@
 
 ## ROCm Interface Strategy
 
-- Primary v1 path: modify `libhsakmt` in C++ to target `amdgpu_lite` directly, and make Cosmos provide the corresponding low-level device semantics.
+- Primary v1 path: modify `libhsakmt` in C++ to target `amdgpu_lite` directly, and make Mirage provide the corresponding low-level device semantics.
 - Intended compatibility seam: higher-level HIP/PyTorch/vLLM applications remain unchanged; `libhsakmt` is the main adaptation point.
-- Wheel delivery model: install published ROCm/PyTorch/vLLM wheels, then overlay a Cosmos-supplied `libhsakmt` package or shared library replacement.
+- The actual `libhsakmt` binding implementation is deferred until the simulator-native milestones are stable enough to support it; before that, Mirage only defines and tests the simulator-side contract.
+- Wheel delivery model: install published ROCm/PyTorch/vLLM wheels, then overlay a Mirage-supplied `libhsakmt` package or shared library replacement.
+- System-visibility layering for v1 is `PackageModel -> DevicePersona -> amdgpu_lite -> libhsakmt`; host PCI device emulation is not on the critical path.
 - Fallback path: introduce targeted KFD/DRM emulation only when runtime bringup exposes behavior that cannot be expressed cleanly through the `libhsakmt` + `amdgpu_lite` contract.
+- `userspace_driver` is a moving dependency: before every `libhsakmt` or `amdgpu_lite` work batch, fetch and diff `origin/users/powderluv/userspace-driver` and reconcile the current branch state before starting implementation.
 - Validation ladder: cluster topology boot -> virtual GPU queue/memory -> first synthetic dispatch -> `rocminfo` -> HSA runtime startup -> first HIP kernel -> PyTorch smoke -> vLLM smoke -> RCCL/multi-node.
+
+## Current Parallel Execution Plan
+
+This is the detailed work plan that can proceed while dedicated sub-agents are expanding CDNA4 ISA execution and raw binary decode coverage. It deliberately avoids starting the `libhsakmt` binding too early and avoids overlapping with the active ISA/decoder implementation surface.
+
+### Parallel Track P0: SoC/package modeling and topology identity
+- Define a simulator-native MI355X-class package model that is independent of ROCm bring-up.
+- Add stable IDs and schema fields for package, die/chiplet grouping, HBM stacks, SDMA engines, queue groups, and fabric endpoints.
+- Separate architectural identity (`device_id`, marketing SKU, family, link topology) from runtime identity (`package_uuid`, `gpu_uuid`, node-local IDs, synthetic BDF placeholders).
+- Add golden topology fixtures for `1 package x 1 GPU`, `1 package x 8 GPUs`, and a minimal multi-node profile.
+
+### Parallel Track P1: Single-GPU runtime substrate outside ISA/decode
+- Harden queue, signal, dispatch, and memory-lifecycle objects without touching opcode execution.
+- Define queue packet structs, dispatch descriptors, completion records, signal/event semantics, and deterministic queue ordering rules.
+- Build out GPU virtual address space objects, allocation handles, mapping lifetime rules, and page-granularity accounting.
+- Add SDMA placeholder objects and scheduling hooks even if DMA execution remains synthetic at first.
+
+### Parallel Track P2: Control-plane boot path and lifecycle
+- Implement `ClusterProfile` loading, `ClusterInstance` materialization, and `miraged` boot-state transitions for simulator-native bring-up.
+- Wire `miragectl boot/status/logs/shutdown` into the daemon state model for no-ROCm cluster instances.
+- Persist topology snapshots, boot state, and simulator-native logs for later replay/debug work.
+- Add deterministic startup and shutdown tests for a small fixed topology.
+
+### Parallel Track P3: Trace, replay, and observability foundations
+- Define the event types emitted by queue submission, dispatch launch/complete, memory alloc/map/unmap, signal wait/set, and fabric transfer scheduling.
+- Build a trace sink format and a replay checkpoint format before ROCm userspace enters the system.
+- Add runtime metrics capture for dispatch counts, decode-cache behavior, queue depths, allocation pressure, and scheduler utilization.
+- Add an instruction-coverage report path so Mirage can track supported CDNA4 instruction names over time.
+
+### Parallel Track P4: Container/runtime packaging without active GPU binding
+- Continue the wheel-based runtime environment work, but stop at environment creation and library overlay plumbing.
+- Define how Mirage injects version-pinned ROCm/PyTorch/vLLM wheels and how an eventual `libhsakmt` overlay will be inserted, without implementing the binding yet.
+- Add host-only simulator smoke runs inside the node container so image/version issues are solved early.
+- Lock down image/version compatibility rules and schema-to-runtime compatibility checks.
+
+### Parallel Track P5: ROCm-binding readiness artifacts, but not the binding
+- Define the simulator-side `amdgpu_lite` contract in detail: topology queries, memory alloc/map calls, queue creation/submission, signal/event operations, and capability/property queries.
+- Produce request/response golden fixtures for that contract so the later `libhsakmt` work has a stable target.
+- Add a standing process to fetch and diff `origin/users/powderluv/userspace-driver` before any binding work starts; treat it as the moving upstream for userspace-driver-facing behavior.
+- Keep a backlog of mismatches between Mirage needs and the current `userspace_driver` branch, but do not start binding code until Milestone E/F work begins.
+
+### Parallel Track P6: Performance and scheduler infrastructure
+- Improve simulator runtime benchmarking, metrics history, and regression tracking without changing ISA semantics.
+- Build queue arbitration, workgroup scheduling, shared-LDS lifetime management, and fabric event ordering as separate performance/runtime tracks.
+- Add benchmark buckets for empty dispatch, ALU-heavy dispatch, memory-heavy dispatch, LDS/barrier dispatch, and synthetic transfer/fabric workloads.
+- Gate performance work with reproducible benchmark outputs rather than ad hoc spot checks.
 
 ## Bring-Up Milestones
 
-These milestones are the concrete execution path for bringing up Cosmos. The simulator-native milestones come first; the ROCm-facing milestones follow once the virtual cluster and GPU emulator exist.
+These milestones are the concrete execution path for bringing up Mirage. The simulator-native milestones come first; the ROCm-facing milestones follow once the virtual cluster and GPU emulator exist.
 
 ### Milestone A: Cluster topology boot
-- Goal: prove Cosmos can boot and manage a deterministic simulated topology before any ROCm userspace is involved.
-- Required Cosmos capabilities:
+- Goal: prove Mirage can boot and manage a deterministic simulated topology before any ROCm userspace is involved.
+- Required Mirage capabilities:
   - Device profile parsing for nodes, GPUs, and fabric links
-  - `cosmosd` lifecycle for create, boot, status, logs, snapshot, and shutdown
+  - `miraged` lifecycle for create, boot, status, logs, snapshot, and shutdown
   - Per-node container boot with injected synthetic GPU inventory
   - Stable node IDs, GPU IDs, and fabric IDs across reboots/replay
 - Concrete deliverables:
   - `ClusterProfile`, `NodeProfile`, `GpuProfile`, and `FabricLinkProfile` data models with stable IDs
   - Runtime instance objects for `ClusterInstance`, `NodeInstance`, and `GpuInstance`
   - A topology loader that materializes the runtime graph from the profile schema
-  - A boot-state machine in `cosmosd` covering create, boot, ready, failed, snapshot, replay, and shutdown
+  - A boot-state machine in `miraged` covering create, boot, ready, failed, snapshot, replay, and shutdown
   - Boot smoke tests and golden topology snapshots for a minimal `2 nodes x 2 GPUs` profile
 - Validation:
-  - `cosmosctl` boots and shuts down a minimal multi-node topology repeatably
+  - `miragectl` boots and shuts down a minimal multi-node topology repeatably
   - Per-node logs show the expected simulated devices and links
   - Boot traces can be captured and replayed
 - Exit criteria: a small simulated cluster can boot repeatably with no ROCm stack present.
 
 ### Milestone B: Virtual GPU device model
 - Goal: make one virtual CDNA GPU exist as a simulator resource model independent of ROCm.
-- Required Cosmos capabilities:
+- Required Mirage capabilities:
   - GPU memory regions (HBM, LDS, scratch, GPU VA)
   - Queue objects, signal objects, and lifecycle management
   - Internal topology and device property reporting
@@ -91,7 +142,7 @@ These milestones are the concrete execution path for bringing up Cosmos. The sim
   - synthetic no-op dispatch
   - write-one kernel
   - minimal vector-add-style workload with CPU-verified output
-- Required Cosmos capabilities:
+- Required Mirage capabilities:
   - Narrow command submission path
   - Code object loading or equivalent internal kernel representation for the first workload subset
   - Dispatch completion, barriers, and basic memory visibility semantics
@@ -109,7 +160,7 @@ These milestones are the concrete execution path for bringing up Cosmos. The sim
 
 ### Milestone D: Minimal clustered execution
 - Goal: extend single-GPU simulation into a minimal multi-GPU and multi-node system before full RCCL/framework bring-up.
-- Required Cosmos capabilities:
+- Required Mirage capabilities:
   - Multi-GPU/node addressing and topology modeling
   - Virtual xGMI/PCIe/fabric latency and bandwidth modeling
   - Basic inter-node copy or collective-style simulator primitives
@@ -126,25 +177,25 @@ These milestones are the concrete execution path for bringing up Cosmos. The sim
 - Exit criteria: a cluster-level synthetic workload runs repeatably across simulated nodes.
 
 ### Milestone E: `rocminfo` bring-up
-- Goal: prove the Cosmos `libhsakmt` path can initialize HSA, enumerate one simulated GPU, and report coherent topology/basic memory properties.
-- Required Cosmos capabilities:
+- Goal: prove the Mirage `libhsakmt` path can initialize HSA, enumerate one simulated GPU, and report coherent topology/basic memory properties.
+- Required Mirage capabilities:
   - Device identity and topology reporting at the `amdgpu_lite` boundary
   - HSA agent enumeration data
   - Basic memory heap reporting
   - Minimal signal/event primitives needed during runtime startup
 - Required `libhsakmt` capabilities:
-  - Open the Cosmos device path
+  - Open the Mirage device path
   - Query topology and memory properties through `amdgpu_lite`
   - Complete HSA runtime initialization without `/dev/kfd`
 - Validation:
   - `rocminfo` runs successfully in the node container
   - One simulated CDNA GPU is reported with expected name, memory size, and agent properties
   - Startup trace is captured for replay/debug
-- Exit criteria: `rocminfo` passes as the first end-to-end proof that the adapted `libhsakmt` can talk to Cosmos.
+- Exit criteria: `rocminfo` passes as the first end-to-end proof that the adapted `libhsakmt` can talk to Mirage.
 
 ### Milestone F: HSA queue and memory bring-up
-- Goal: prove raw HSA queue creation, memory allocation/mapping, signal handling, and queue submission all work over the Cosmos device contract.
-- Required Cosmos capabilities:
+- Goal: prove raw HSA queue creation, memory allocation/mapping, signal handling, and queue submission all work over the Mirage device contract.
+- Required Mirage capabilities:
   - Device memory allocation and free
   - GPU virtual address assignment and mapping
   - Queue creation/destruction
@@ -161,7 +212,7 @@ These milestones are the concrete execution path for bringing up Cosmos. The sim
 - Exit criteria: a dedicated HSA-level smoke test passes without involving HIP.
 
 ### Milestone G: First HIP kernel
-- Goal: prove the full path from HIP runtime through HSA into the Cosmos execution core by running one trivial kernel correctly.
+- Goal: prove the full path from HIP runtime through HSA into the Mirage execution core by running one trivial kernel correctly.
 - Suggested first workload:
   - a write-one kernel
   - or a minimal vector add kernel with CPU-verified output
@@ -178,7 +229,7 @@ These milestones are the concrete execution path for bringing up Cosmos. The sim
 - Goal: prove the wheel-based runtime contract is viable for real frameworks, not just simulator-native tests, ROCm tools, and HIP samples.
 - Required environment:
   - published ROCm wheel set
-  - Cosmos `libhsakmt` overlay
+  - Mirage `libhsakmt` overlay
   - pinned PyTorch wheel compatible with the selected ROCm runtime
 - Suggested smoke checks:
   - import `torch`
@@ -190,13 +241,13 @@ These milestones are the concrete execution path for bringing up Cosmos. The sim
   - install flow works from a fresh virtual environment
   - no manual source builds are required
   - logs and traces are preserved for triage
-- Exit criteria: a published PyTorch wheel can install and run a minimal GPU workload through Cosmos in a clean environment.
+- Exit criteria: a published PyTorch wheel can install and run a minimal GPU workload through Mirage in a clean environment.
 
 ## Repository Layout in TheRock
 
 ```text
 TheRock/
-  cosmos/
+  mirage/
     pyproject.toml
     README.md
     compat/
@@ -222,8 +273,8 @@ TheRock/
       timing/
       trace/
     tools/
-      cosmosctl/
-      cosmosd/
+      miragectl/
+      miraged/
     gui/
     container/
     native/
@@ -241,7 +292,7 @@ TheRock/
 The simulator core should be organized around the execution-critical subsystems, not around ROCm-facing APIs.
 
 ```text
-TheRock/cosmos/
+TheRock/mirage/
   lib/
     sim/
       topology/
@@ -420,13 +471,13 @@ TheRock/cosmos/
 ## Concrete Work Breakdown
 
 ### Workstream 0: Monorepo scaffolding and wheel-based runtime contract (Phase A)
-- Create `TheRock/cosmos/` with its own `pyproject.toml`, README, test directories, install layout, and developer entry points.
-- Keep Cosmos out of the top-level TheRock `add_subdirectory(...)` build graph; any native helpers build through Cosmos-owned entry points only.
-- Define the supported environment matrix for prebuilt ROCm, PyTorch, and vLLM wheels, including pinned version sets and the matching Cosmos `libhsakmt` overlay rules.
-- Implement bootstrap flows that create a virtual environment, `pip install` the required published wheels, install the Cosmos `libhsakmt` overlay, and launch `cosmosctl` and `cosmosd`.
+- Create `TheRock/mirage/` with its own `pyproject.toml`, README, test directories, install layout, and developer entry points.
+- Keep Mirage out of the top-level TheRock `add_subdirectory(...)` build graph; any native helpers build through Mirage-owned entry points only.
+- Define the supported environment matrix for prebuilt ROCm, PyTorch, and vLLM wheels, including pinned version sets and the matching Mirage `libhsakmt` overlay rules.
+- Implement bootstrap flows that create a virtual environment, `pip install` the required published wheels, install the Mirage `libhsakmt` overlay, and launch `miragectl` and `miraged`.
 - Add CI smoke coverage for environment creation, wheel installation, CLI/daemon startup, and a no-GPU host-only simulator smoke run.
 
-**Exit criteria:** a fresh checkout can enter `TheRock/cosmos/`, install Cosmos plus pinned ROCm/PyTorch/vLLM wheels and the matching Cosmos `libhsakmt` overlay, and launch the basic Cosmos workflow without building TheRock itself.
+**Exit criteria:** a fresh checkout can enter `TheRock/mirage/`, install Mirage plus pinned ROCm/PyTorch/vLLM wheels and the matching Mirage `libhsakmt` overlay, and launch the basic Mirage workflow without building TheRock itself.
 
 ### Workstream 1: Public contracts and schemas (Phase A)
 - Define `device_profile.schema.json` for GPU/node/fabric topology and timing toggles.
@@ -438,26 +489,28 @@ TheRock/cosmos/
 **Exit criteria:** profiles, manifests, and trace files validate in CI and are stable enough for CLI/daemon integration.
 
 ### Workstream 2: Control plane and orchestration service (Phase A)
-- Implement `cosmosd` lifecycle: create profile, boot node set, run workload, collect logs, shutdown, snapshot, replay.
-- Implement `cosmosctl` commands around the daemon APIs.
+- Implement `miraged` lifecycle: create profile, boot node set, run workload, collect logs, shutdown, snapshot, replay.
+- Implement `miragectl` commands around the daemon APIs.
 - Add persistent state for profiles, booted simulator instances, logs, and snapshots.
 - Add structured logging, health checks, and failure reporting suitable for CI automation.
 - Add auth model for local-only bringup first, with remote control left behind an interface boundary.
 
-**Exit criteria:** Milestone A (cluster topology boot) succeeds for a small deterministic topology under `cosmosctl`/`cosmosd`.
+**Exit criteria:** Milestone A (cluster topology boot) succeeds for a small deterministic topology under `miragectl`/`miraged`.
 
 ### Workstream 3: Container node runtime (Phase A-B)
-- Build node image strategy for published ROCm user-space stacks pinned to specific runtime versions plus a Cosmos `libhsakmt` overlay.
+- Build node image strategy for published ROCm user-space stacks pinned to specific runtime versions plus a Mirage `libhsakmt` overlay.
 - Implement one-container-per-node orchestration with mounted artifacts, env injection, shared-library overlay handling, and log capture.
-- Provide host CPU passthrough for host code while routing GPU-facing interactions into Cosmos.
+- Provide host CPU passthrough for host code while routing GPU-facing interactions into Mirage.
 - Add filesystem snapshotting and deterministic startup state capture.
 - Define image/version compatibility policy between daemon, schemas, and ROCm user-space payloads.
 
-**Exit criteria:** a node container can launch published ROCm/HIP user-space binaries with the Cosmos `libhsakmt` overlay under Cosmos control with repeatable startup behavior.
+**Exit criteria:** a node container can launch published ROCm/HIP user-space binaries with the Mirage `libhsakmt` overlay under Mirage control with repeatable startup behavior.
 
-### Workstream 4: `libhsakmt` + `amdgpu_lite` ROCm compatibility path (Phase A-B)
+### Workstream 4: Deferred `libhsakmt` + `amdgpu_lite` ROCm compatibility path (Phase B-C)
+- Do not start active binding implementation until Milestones A-D and the single-GPU simulator core are stable enough to make ROCm-facing bring-up efficient.
+- Before each implementation batch, fetch and diff `origin/users/powderluv/userspace-driver`; treat that branch as the moving dependency for userspace-driver-facing behavior.
 - Land the C++ `libhsakmt` changes needed to target `amdgpu_lite` directly for topology discovery, memory allocation, queue creation, signal/event handling, and synchronization.
-- Define the Cosmos-side `amdgpu_lite` contract required by that path: device info, memory alloc/map, queue setup/submission, signal/event wiring, and topology exposure.
+- Define the Mirage-side `amdgpu_lite` contract required by that path: device info, memory alloc/map, queue setup/submission, signal/event wiring, and topology exposure.
 - Add compatibility shims for Milestone E (`rocminfo`) and Milestone F (raw HSA queue/memory bring-up) using `libhsakmt` over `amdgpu_lite`.
 - Establish tracing hooks at the `amdgpu_lite` request boundary so replay and debug data are captured early.
 - Keep full KFD/DRM ioctl emulation as a fallback only for behaviors that cannot be expressed cleanly through the `libhsakmt` path.
@@ -476,9 +529,9 @@ TheRock/cosmos/
 **Exit criteria:** Milestone B (virtual GPU device model) and Milestone C (first synthetic dispatch) succeed, establishing a usable single-GPU emulator core.
 
 ### Workstream 6: ROCm compatibility and developer workflow (Phase B-C)
-- Run HIP runtime/compiler test suites against Cosmos single-node execution through the `libhsakmt` overlay path.
+- Run HIP runtime/compiler test suites against Mirage single-node execution through the `libhsakmt` overlay path.
 - Expand from Milestones E/F into Milestone G (first HIP kernel), then land Milestone H (PyTorch wheel smoke) from published wheels.
-- Implement debugger/profiler attach surfaces exposed by `cosmosctl` and the GUI.
+- Implement debugger/profiler attach surfaces exposed by `miragectl` and the GUI.
 - Add error surfacing for unsupported ioctls, ISA features, and runtime behaviors.
 - Produce developer docs for creating profiles, booting nodes, running apps, and reading traces.
 
@@ -491,7 +544,7 @@ TheRock/cosmos/
 - Add distributed workload manifests and launch coordination across node containers.
 - Validate against representative multi-rank collectives and small distributed training jobs.
 
-**Exit criteria:** Milestone D (minimal clustered execution) succeeds, and Cosmos can then scale toward deterministic RCCL-backed workloads across simulated nodes.
+**Exit criteria:** Milestone D (minimal clustered execution) succeeds, and Mirage can then scale toward deterministic RCCL-backed workloads across simulated nodes.
 
 ### Workstream 8: Record/replay and GUI workflow (Phase C)
 - Implement trace capture for queue submissions, memory events, sync operations, collectives, and checkpoints.
@@ -516,33 +569,34 @@ TheRock/cosmos/
 - Add layered CI: schema/unit, host integration, simulator conformance, replay regression, and calibrated perf checks.
 - Add crash artifact collection for traces, logs, manifests, and snapshots.
 - Establish compatibility matrix by ROCm version, host distro, and supported profile schema version.
-- Add alpha/beta release criteria and issue triage labels specific to Cosmos.
+- Add alpha/beta release criteria and issue triage labels specific to Mirage.
 
-**Exit criteria:** Cosmos has repeatable packaging, gating CI, and explicit release criteria inside normal TheRock workflows.
+**Exit criteria:** Mirage has repeatable packaging, gating CI, and explicit release criteria inside normal TheRock workflows.
 
 ## Near-Term Execution Order
-1. Workstream 0: scaffold `TheRock/cosmos/` and establish the wheel-based runtime contract.
+1. Workstream 0: scaffold `TheRock/mirage/` and establish the wheel-based runtime contract.
 2. Workstream 1: freeze schema v1 and daemon/CLI API surface.
-3. Workstream 2 / Milestone A: make `cosmosd` and `cosmosctl` boot a deterministic simulated cluster topology.
+3. Workstream 2 / Milestone A: make `miraged` and `miragectl` boot a deterministic simulated cluster topology.
 4. Workstream 5 / Milestone B: bring up the single virtual GPU device model with simulator-native queue and memory operations.
 5. Workstream 5 / Milestone C: run the first synthetic dispatch through the emulator.
 6. Workstream 7 / Milestone D: extend the simulator to a minimal clustered execution path.
-7. Workstream 3: package the node runtime so published ROCm stacks can be injected cleanly once the simulator exists.
-8. Workstream 4 / Milestone E: bring up `rocminfo`.
-9. Workstream 4 / Milestone F: bring up raw HSA queue and memory operations.
-10. Workstream 6 / Milestone G: run the first HIP kernel end-to-end.
-11. Workstream 6 / Milestone H: run a PyTorch wheel smoke workload.
-12. Workstream 8: add replay and GUI.
-13. Workstream 9: calibrate hot-kernel cycle mode.
-14. Workstream 10: keep packaging and CI in lockstep with all phases.
+7. In parallel with steps 3-6, execute Parallel Tracks P0-P6 that do not depend on the active `libhsakmt` binding.
+8. Workstream 3: package the node runtime so published ROCm stacks can be injected cleanly once the simulator exists.
+9. Workstream 4 / Milestone E: bring up `rocminfo`.
+10. Workstream 4 / Milestone F: bring up raw HSA queue and memory operations.
+11. Workstream 6 / Milestone G: run the first HIP kernel end-to-end.
+12. Workstream 6 / Milestone H: run a PyTorch wheel smoke workload.
+13. Workstream 8: add replay and GUI.
+14. Workstream 9: calibrate hot-kernel cycle mode.
+15. Workstream 10: keep packaging and CI in lockstep with all phases.
 
 ## Test Plan
 - ISA correctness:
   - Differential instruction/memory semantics tests against CDNA spec-derived vectors.
   - Kernel-level correctness parity checks versus MI300X hardware outputs.
 - ROCm compatibility:
-  - HIP runtime/compiler test suite pass criteria through the Cosmos `libhsakmt` compatibility layer.
-  - End-to-end PyTorch + RCCL distributed workloads across simulated multi-node topologies using published wheels plus the Cosmos overlay.
+  - HIP runtime/compiler test suite pass criteria through the Mirage `libhsakmt` compatibility layer.
+  - End-to-end PyTorch + RCCL distributed workloads across simulated multi-node topologies using published wheels plus the Mirage overlay.
 - Determinism and debug:
   - Record/replay reproducibility tests for kernel dispatch and synchronization events.
   - Debugger/profiler attach behavior tests through CLI and GUI flows.
@@ -552,11 +606,14 @@ TheRock/cosmos/
 
 ## Assumptions and Defaults
 - Greenfield implementation with Linux host only.
-- Repository home is `TheRock/cosmos/`, not a separate source repository.
-- Cosmos is monorepo-resident but not part of the default TheRock build graph.
-- Primary ROCm integration path is a Cosmos-specific C++ `libhsakmt` change that targets `amdgpu_lite` directly.
+- Repository home is `TheRock/mirage/`, not a separate source repository.
+- Mirage is monorepo-resident but not part of the default TheRock build graph.
+- Current low-level ISA/decode bring-up is using the official `gfx950`/CDNA4 machine-readable ISA data, while the higher-level simulator architecture remains profile-driven and SoC/package-driven.
+- Primary ROCm integration path is a Mirage-specific C++ `libhsakmt` change that targets `amdgpu_lite` directly.
 - Applications and higher-level frameworks remain unchanged; `libhsakmt` is the intended adaptation seam.
-- Cosmos runtime validation is based on published wheel installs plus a Cosmos `libhsakmt` overlay, not on building ROCm/PyTorch/vLLM from source inside TheRock.
+- v1 system visibility is through the userspace compatibility seam, not through host PCI endpoint emulation.
+- The `userspace_driver` branch is expected to move independently; its latest state must be checked before any active `libhsakmt` integration work begins.
+- Mirage runtime validation is based on published wheel installs plus a Mirage `libhsakmt` overlay, not on building ROCm/PyTorch/vLLM from source inside TheRock.
 - AMD-only roadmap (no NVIDIA backend planned).
 - CDNA in v1; RDNA support starts in v2.
 - Scope is fixed (cluster scale + compatibility + hot-kernel cycle mode); schedule flexes accordingly.
