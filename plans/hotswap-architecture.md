@@ -332,6 +332,34 @@ The core rmsnorm computation uses standard VALU with identical encoding.
 | torch.mm (bf16 GEMM) | 3 sizes | All PASS, valid output |
 | torch.sdpa (attention) | 3 seq\_lens | All PASS, no NaN/Inf |
 
+### Numerical Verification: Bit-Identical Output
+
+Cross-gen on MI300X produces **bit-identical** results to native MI300X execution
+for all kernels. Verified by running with fixed random seed (42) and comparing
+MD5 hashes of output tensors:
+
+```
+Kernel               │ MI355X native        │ MI300X native        │ MI300X crossgen      │ XGen==Native?
+-----------------------------------------------------------------------------------------------
+quant_xq             │             92e4977c │             c5eb343f │             c5eb343f │ EXACT
+quant_scale          │             9bafed63 │             c34109b8 │             c34109b8 │ EXACT
+rmsnorm_out          │             feb44472 │             08edd105 │             08edd105 │ EXACT
+rmsnorm_res          │             a475a9bc │             875b71c6 │             875b71c6 │ EXACT
+topk_ids             │             9b44d162 │             9b44d162 │             9b44d162 │ EXACT
+topk_weights         │             58b4568f │             58b4568f │             58b4568f │ EXACT
+mm_out               │             fd72e548 │             0142faeb │             0142faeb │ EXACT
+sdpa_out             │             4882cbcc │             5ac24002 │             5ac24002 │ EXACT
+softmax_out          │             680703d4 │             a915b4b6 │             a915b4b6 │ EXACT
+gelu_out             │             8d2977ea │             760df323 │             760df323 │ EXACT
+-----------------------------------------------------------------------------------------------
+rmsnorm vs torch ref │ max_diff=0.031250     │ max_diff=0.031250     │ max_diff=0.031250
+```
+
+MI355X and MI300X hashes differ (expected -- different hardware, different FP
+rounding). MI300X cross-gen and MI300X native are **bit-identical** for all 10
+output tensors. Integer operations (`topk_ids`, `topk_weights`) match across all
+three configurations.
+
 ### Key Finding: Encoding Compatibility
 
 gfx942 and gfx950 share **identical binary encodings** for all standard
