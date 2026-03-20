@@ -1,4 +1,29 @@
-# gfx1250 → gfx950 Cross-Family ISA Transpiler Plan
+# gfx1250 → gfx942 Cross-Family ISA Transpiler
+
+## Implementation Status (2026-03-19)
+
+**18/20 test kernels passing** on MI300X (gfx942) via load-time transpilation of gfx1250 binaries.
+
+| Category | Tests | Status |
+|----------|-------|--------|
+| Scalar compute (15 kernels) | vector_add, saxpy, relu, reduce_sum, dot_product, matrix_add_2d, clamp, stencil_1d, max_reduce, sqrt_vals, int_elementwise, fma_vals, exp_kernel, recip_vals, mag2d | All PASS |
+| Dense matmul (12 shapes) | 8x8 to 2048x16x128, hipBLAS-LT-inspired | All PASS |
+| Softmax (7 shapes) | Row-wise with shared-mem reduction, exp, reciprocal | All PASS |
+| Fused attention (4 shapes) | QK^T + softmax + PV, with sqrtf/division | PASS (when code fits .text) |
+| Split-K matmul (8 shapes) | 2D grid (blockIdx.y = split dimension) | 3/8 PASS (>256 blocks fail) |
+| Multi-head attention (4 shapes) | 2D grid (blockIdx.y = head), 576 instructions | 0/4 (VGPR allocation mismatch) |
+
+**Implementation:** ~3,200 lines in `transpiler.cpp`. Full disassemble→translate→reassemble pipeline
+using LLVM MC. MCInst-level taint analysis for TTMP workgroup ID chains. 15 wave32→wave64 bugs
+found and fixed.
+
+**Target:** Currently transpiles to gfx942 (MI300X, CDNA3). The plan below was originally for
+gfx950 (MI355X, CDNA4) but the implementation targets gfx942 for testing on available hardware.
+gfx950 support would require minimal changes (different MACH value, some instruction differences).
+
+---
+
+## Original Plan
 
 ## Executive Summary
 

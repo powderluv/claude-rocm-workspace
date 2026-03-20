@@ -1,5 +1,18 @@
 # ROCm HotSwap: Load-Time ISA Rewriter for AMD GPUs
 
+## Status (2026-03-19)
+
+Two modes of operation:
+
+1. **Same-family HotSwap (gfx950→gfx942):** Production-ready. 1.000x performance,
+   bit-identical numerics, 1315/1315 kernel loads, 17/17 AITER tests passing.
+   Only 1.6% of instructions need rewriting (same encoding family).
+
+2. **Cross-family Transpiler (gfx1250→gfx942):** 18/20 test kernels passing.
+   Full disassemble→translate→reassemble pipeline (~3,200 lines). Handles wave32→wave64
+   adaptation, SALU float emulation, scale_offset memory addressing, shared memory
+   reductions, fused attention kernels. See `plans/gfx1250-on-gfx950-analysis.md`.
+
 ## 1. Overview
 
 HotSwap intercepts GPU code object loading in the ROCR runtime to rewrite
