@@ -1,6 +1,6 @@
 # ROCm HotSwap: Load-Time ISA Rewriter for AMD GPUs
 
-## Status (2026-03-19)
+## Status (2026-03-24)
 
 Two modes of operation:
 
@@ -8,10 +8,23 @@ Two modes of operation:
    bit-identical numerics, 1315/1315 kernel loads, 17/17 AITER tests passing.
    Only 1.6% of instructions need rewriting (same encoding family).
 
-2. **Cross-family Transpiler (gfx1250→gfx942):** 18/20 test kernels passing.
-   Full disassemble→translate→reassemble pipeline (~3,200 lines). Handles wave32→wave64
-   adaptation, SALU float emulation, scale_offset memory addressing, shared memory
-   reductions, fused attention kernels. See `plans/gfx1250-on-gfx950-analysis.md`.
+2. **Cross-family Transpiler (gfx1250→gfx942):** **42/42 test kernels passing.**
+   Full disassemble→translate→reassemble pipeline (~5,800 lines). Handles:
+   - Wave32→wave64 adaptation (exec_hi management, VGPR pair alignment)
+   - SALU float emulation (s_mul_f32, s_cvt_*, s_cmp_f32 → VALU + readfirstlane)
+   - scale_offset memory addressing (byte-offset pre-multiplication)
+   - v_bitop2_b32 full 256-entry truth table decomposition
+   - VOPD dual-issue splitting with write-read conflict detection
+   - WMMA→MFMA matrix instruction translation (5 shapes)
+   - 160+ mnemonic renames across 11 instruction families
+   - 45+ special instruction handlers
+   - Dynamic temp VGPR allocation (avoids register collisions)
+   - Device library support (tanhf, expf, rsqrtf, sqrt_f64)
+   - 42 test kernels covering 25+ instruction families including:
+     matmul, split-K matmul, softmax, attention (forward + multihead),
+     atomics, half-precision, f64, GELU, SiLU, tanh, sigmoid, layernorm,
+     RMSnorm, warp shuffle, bitmanip, and more.
+   See `plans/gfx1250-on-gfx950-analysis.md` for the original analysis.
 
 ## 1. Overview
 
@@ -399,16 +412,182 @@ rocr-runtime/runtime/hsa-runtime/
 │   ├── hotswap_rules.cpp            # self-contained JSON rule parser
 │   ├── trampoline.hpp               # trampoline builder header
 │   ├── trampoline.cpp               # trampoline builder implementation
+│   ├── transpiler.hpp               # cross-family transpiler header
+│   ├── transpiler.cpp               # cross-family transpiler (~5,800 lines)
+│   │                                #   GFX1250→GFX942 full ISA translation
+│   │                                #   - disassemble → translate → reassemble
+│   │                                #   - 160+ mnemonic renames, 45+ handlers
+│   │                                #   - wave32→wave64, SALU float, v_bitop2
+│   │                                #   - kernel descriptor + MSGPACK patching
 │   ├── CMakeLists.txt               # standalone build (unit tests)
 │   └── tests/
-│       ├── hotswap_test.cpp         # unit tests
+│       ├── test_suite.hip           # 42-kernel transpiler test suite
+│       ├── *.hip                    # individual kernel source files (42)
+│       ├── hotswap_test.cpp         # unit tests (same-family)
 │       └── test_rules.json          # example rules file
 │
 clr/hipamd/src/
 └── hip_fatbin.cpp                   # cross-gen fat binary intercept
 ```
 
-## 8. Known Limitations
+## 8. Cross-Family Transpiler (gfx1250→gfx942)
+
+### Architecture
+
+The cross-family transpiler handles the fundamentally different ISA families
+RDNA4 (gfx1250, wave32) and CDNA3 (gfx942, wave64). Unlike same-family
+retargeting (which shares encodings), this requires full disassembly,
+instruction-by-instruction translation, and reassembly.
+
+**Pipeline:**
+```
+GFX1250 ELF (.text + .rodata + .note)
+  │
+  ▼
+1. Disassemble: LLVM MC → SourceInstr[]
+2. TTMP Taint Analysis: skip workgroup ID computation chain
+3. Translate: for each instruction →
+   │  - Check rename tables (160+ entries)
+   │  - Apply special handlers (45+)
+   │  - Widen exec/VCC for wave64
+   │  - Emulate SALU float via VALU
+   │  - Split VOPD dual-issue
+   │  - Decompose v_bitop2 truth tables
+   │  - Handle scale_offset addressing
+   │  - Fix VOP3 constant bus violations
+   │  - Emit instruction(s)
+4. Post-processing:
+   │  - Kernel-specific attn fixes (s25 tree gate, etc.)
+   │  - VCC_hi clearing before branches
+   │  - Inner loop scheduling
+   │  - s_code_end padding
+5. Assemble: LLVM MC → binary
+6. Patch .text in-place
+7. Patch kernel descriptors (RSRC1/RSRC2/RSRC3)
+8. Patch MSGPACK metadata (wavefront_size, vgpr/sgpr counts)
+9. Patch ELF e_flags + .note ISA string
+```
+
+**Wave32→Wave64 Adaptation:**
+- GFX1250 workgroups use 32 threads (wave32). GFX942 hardware only supports wave64.
+- Strategy: run wave32 code in the lower 32 lanes with `exec_hi = 0` permanently.
+- `v_cmpx` instructions on GFX9 write all 64 exec bits — insert `exec_hi = 0` after each.
+- Workgroup IDs come from TTMP registers on GFX12; on GFX9, from system SGPRs.
+  The TTMP taint analysis skips the GFX12 computation chain and uses hardware-provided IDs.
+- VCC references widened from `vcc_lo` (32-bit) to `vcc` (64-bit) where needed.
+- `s_and_saveexec_b32` (wave32) expanded to manual save + AND + exec_hi clear.
+
+**Dynamic Temp VGPR Allocation:**
+- The transpiler needs scratch VGPRs for SALU float emulation, VOP3 literal
+  materialization, and other instruction expansions.
+- Uses `scale_temp_vgpr = save_vgpr_y + 1` (above the kernel's VGPR allocation).
+- Three temp VGPRs (vt0, vt1, vt2) guaranteed collision-free with kernel data.
+- VGPR allocation bumped by +8 in the kernel descriptor to accommodate saves + temps.
+
+**Kernel Descriptor Patching (RSRC1/RSRC2/RSRC3):**
+- RSRC1 bits[5:0] = VGPR blocks (granularity 4 on GFX9)
+- RSRC1 bits[9:6] = SGPR blocks (granularity 8 on GFX9, ceiling division)
+- RSRC3 bits[5:0] = ACCUM_OFFSET (arch/accumulator VGPR boundary)
+- RSRC2: USER_SGPR=2, TGID_X/Y/Z_EN=1 for workgroup ID system SGPRs
+
+### Instruction Coverage (25+ families, 256+ mnemonics verified)
+
+| Category | Examples | Handling |
+|----------|----------|----------|
+| Global memory | global_load_b32, global_store_b64 | Rename (20 entries) |
+| Flat memory | flat_load_b32, flat_store_b64 | Rename (18 entries) |
+| Scratch memory | scratch_load_b32, scratch_store | Rename (18 entries) |
+| Buffer memory | buffer_load_b32, buffer_store | Rename (18 entries) |
+| DS/LDS | ds_load_b32, ds_store_b32 | Rename (25 entries) |
+| SMEM | s_load_b32, s_buffer_load_b128 | Rename (14 entries) |
+| Global atomics | global_atomic_add_u32/f32/u64 | Rename + scale_offset (20 entries) |
+| Flat atomics | flat_atomic_add_u32, cmpswap | Rename (14 entries) |
+| DS atomics | ds_add_u32, ds_cmpstore | Rename (6 entries) |
+| Float VALU | v_add_f32, v_fma_f32, v_mul_f32 | Passthrough + _nc_ strip |
+| Int VALU | v_add_u32, v_mul_lo_u32 | Rename (_nc_ → standard) |
+| Transcendental | v_sqrt/exp/rcp/rsq/log_f32 | Passthrough |
+| F64 ops | v_add_f64, v_div_scale_f64 | Strip _e32, null→vcc |
+| Comparisons | v_cmp_gt_f32_e64, v_cmpx | SGPR widening, exec_hi clear |
+| Conditional move | v_cndmask_b32 (e32/e64/bare) | Constant bus fix, mask widening |
+| Bitop truth table | v_bitop2_b32 (all 256 values) | Shannon decomposition |
+| Packed f16 | v_pk_add_f16, v_pk_mul_f16 | _num_ suffix strip |
+| Half convert | v_cvt_f32_f16, v_cvt_f16_f32 | Passthrough |
+| Bit manipulation | v_ffbh_u32, v_ffbl_b32, v_bcnt | Rename (clz→ffbh, ctz→ffbl) |
+| Warp ops | v_readlane_b32, v_readfirstlane | Passthrough |
+| SALU float | s_mul_f32, s_cvt_f32_u32 | VALU emulation + readfirstlane |
+| SALU rsqrt | v_s_rsq_f32 | v_rsq_f32 + readfirstlane |
+| VOPD dual-issue | v_dual_add_f32 :: v_dual_mul_f32 | Split to 2 VOP + conflict detect |
+| WMMA→MFMA | v_wmma_f32_16x16x32_f16 | Wave redistribution (5 shapes) |
+| Wait counters | s_wait_loadcnt, s_wait_dscnt | Map to s_waitcnt vmcnt/lgkmcnt |
+| Barriers | s_barrier_signal/wait | → s_barrier |
+| Scale offset | global_load with scale_offset | v_lshlrev pre-multiply |
+| 64-bit arith | v_add_nc_u64, s_add_nc_u64 | v_lshl_add_u64 / carry chain |
+| GFX12-only | v_maxmin_f32, v_mov_b16 | Decompose / widen |
+| Device library | tanhf, rsqrtf, sqrt_f64 | Full support via dynamic temps |
+
+### Test Results (42/42 ALL PASS)
+
+| Test Kernel | Elements | Exercises |
+|-------------|----------|-----------|
+| vector_add | 256 | Basic VALU, global memory |
+| saxpy | 256 | FMA with scalar multiplier |
+| relu | 256 | Comparison + conditional |
+| reduce_sum | 32896 | LDS reduction, barriers |
+| dot_product | 32896 | Multiply-accumulate + reduction |
+| matrix_add_2d | 512 | 2D grid indexing (blockIdx.y) |
+| clamp | 256 | Nested comparisons |
+| stencil_1d | 256 | Neighbor indexing |
+| max_reduce | 8 | v_max_f32 tree reduction |
+| sqrt_vals | 256 | v_sqrt_f32 |
+| int_elementwise | 256 | Integer ALU |
+| fma_vals | 256 | __fmaf_rn intrinsic |
+| exp_kernel | 256 | v_exp_f32 |
+| recip_vals | 256 | v_rcp_f32 |
+| mag2d | 256 | FMA + sqrt chain |
+| matmul | 12 shapes | Inner-loop FMA, stride patterns |
+| matmul_splitk | 8 shapes | 2D grid, split-K parallel accumulation |
+| softmax_row | 7 shapes | Multi-phase: max→exp→normalize |
+| attn_forward | 4 shapes | Full attention: dot→softmax→output |
+| attn_multihead | 4 shapes | Multi-head attention with head indexing |
+| atomic_histogram | 16 bins | global_atomic_add_u32, ds_add_u32 |
+| atomic_fadd | 8 bins | global_atomic_add_f32 |
+| cndmask_select | 256 | v_cndmask_b32 (e32/e64) |
+| f16_convert | 256 | v_cvt_f32_f16 half precision |
+| median3 | 256 | v_med3_f32 → max+min decomposition |
+| bitfield_ops | 256 | v_bfe, shift patterns |
+| int_minmax | 256 | v_min_i32, v_max_i32, abs |
+| log_rcp | 256 | v_log_f32 + v_rcp_f32 chain |
+| packed_f16 | 128 | v_pk_add_f16, v_pk_mul_f16 |
+| dot_product_f16 | 128 | v_dot2 f16 accumulation |
+| warp_shuffle | 256 | v_readlane_b32, __shfl |
+| bitmanip_ops | 256 | __clz, __ffs, __popc |
+| layernorm | 256 | rsqrt + tree reduction + device lib |
+| gelu_kernel | 256 | GELU activation (tanhf device lib) |
+| reduce_max_idx | 8 | Argmax with shared memory |
+| silu_kernel | 256 | SiLU/Swish (expf device lib) |
+| tanh_kernel | 256 | tanhf device library |
+| sigmoid_kernel | 256 | Sigmoid (1/(1+exp(-x))) |
+| leaky_relu | 256 | Leaky ReLU activation |
+| rmsnorm_kernel | 256 | RMS normalization (rsqrt) |
+| l2_distance | 64 | L2 distance computation |
+| f64_math | 256 | Double-precision sqrt + reciprocal |
+
+### Key Bugs Found and Fixed
+
+| Bug | Impact | Root Cause |
+|-----|--------|-----------|
+| RSRC1 VGPR/SGPR field swap | f64_math crash, all kernels affected | GFX9 bit layout was reversed |
+| SGPR ceiling division | attn_forward/multihead crash | Floor division under-allocated SGPRs |
+| v6 temp register collision | split-K wrong results, device lib crashes | Hardcoded v6 clobbered live data |
+| s25 tree gate SCC clobber | Multihead dot product tree skipped | s_addc carry-out corrupted s_cselect |
+| s10 head offset corruption | Multihead output 128B off | Fix2/3 wrote blockSize to head offset reg |
+| scale_offset on atomics | Atomic histogram wrong addresses | Missing _u32/_f32 suffix match |
+| v_cmpx_e64 exec_hi | Ghost lane memory corruption | Missing exec_hi clear in e64 handler |
+| v_bitop2_b32 incomplete | Complex kernels computed wrong values | Only 3 of 256 truth tables emulated |
+| VOPD write-read conflict | Silent data corruption | Parallel halves not isolated |
+| v_*_f64_e32 encoding | f64 assembly failures | GFX9 f64 ops are VOP3-only |
+
+## 9. Known Limitations
 
 - **FP4/FP8 scale conversions:** `v_cvt_scalef32_pk_fp4_f32` and related
   instructions are currently NOPed out, not emulated. Kernels that depend on
@@ -429,9 +608,9 @@ clr/hipamd/src/
   limiting reach to +/-128KB. For kernels with large `.text` sections,
   `s_setpc_b64` with a literal address load (12 bytes) can extend the range.
 
-## 9. Next Steps
+## 10. Next Steps
 
-### FP4 Emulation Trampolines
+### FP4 Emulation Trampolines (Same-Family)
 
 Replace the NOP pre-pass with actual FP4 emulation using standard VALU:
 
