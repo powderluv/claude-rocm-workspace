@@ -1,0 +1,197 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 820" width="1100" height="820">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;600&amp;display=swap');
+      text { font-family: 'Caveat', 'Comic Sans MS', cursive; }
+      .title { font-size: 28px; font-weight: 600; fill: #1a1a2e; }
+      .subtitle { font-size: 18px; fill: #555; }
+      .label { font-size: 16px; fill: #1a1a2e; }
+      .label-bold { font-size: 17px; font-weight: 600; fill: #1a1a2e; }
+      .label-sm { font-size: 13px; fill: #444; }
+      .label-xs { font-size: 11px; fill: #666; }
+      .env-label { font-size: 14px; fill: #c0392b; font-weight: 600; }
+    </style>
+    <!-- hand-drawn wiggle filter -->
+    <filter id="sketchy">
+      <feTurbulence type="turbulence" baseFrequency="0.015" numOctaves="3" seed="2" result="turb"/>
+      <feDisplacementMap in="SourceGraphic" in2="turb" scale="1.5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="sketchy2">
+      <feTurbulence type="turbulence" baseFrequency="0.02" numOctaves="2" seed="5" result="turb"/>
+      <feDisplacementMap in="SourceGraphic" in2="turb" scale="1.2" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#333" filter="url(#sketchy2)"/>
+    </marker>
+    <marker id="arrowhead-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#c0392b"/>
+    </marker>
+    <marker id="arrowhead-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2980b9"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="820" fill="#faf8f5" rx="8"/>
+
+  <!-- Title -->
+  <text x="550" y="40" text-anchor="middle" class="title">HIP Record &amp; Replay (hip-replay)</text>
+  <text x="550" y="62" text-anchor="middle" class="subtitle">Dual-path architecture: In-Tree CLR hooks + Out-of-Tree interposer</text>
+
+  <!-- ========== APPLICATION BOX ========== -->
+  <rect x="420" y="82" width="260" height="50" rx="12" fill="#e8f4fd" stroke="#2980b9" stroke-width="2.5" filter="url(#sketchy)"/>
+  <text x="550" y="113" text-anchor="middle" class="label-bold" style="font-size:19px; fill:#2980b9">HIP Application</text>
+  <text x="550" y="128" text-anchor="middle" class="label-xs">(PyTorch, rocBLAS, custom kernels...)</text>
+
+  <!-- Arrow down from app -->
+  <line x1="550" y1="132" x2="550" y2="158" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)" filter="url(#sketchy2)"/>
+
+  <!-- ========== FORK POINT ========== -->
+  <text x="550" y="172" text-anchor="middle" class="label-sm" style="font-style:italic">HIP API calls</text>
+
+  <!-- Fork lines -->
+  <path d="M 550,178 Q 550,195 340,205" stroke="#333" stroke-width="1.8" fill="none" stroke-dasharray="6,3" filter="url(#sketchy2)"/>
+  <path d="M 550,178 Q 550,195 760,205" stroke="#333" stroke-width="1.8" fill="none" stroke-dasharray="6,3" filter="url(#sketchy2)"/>
+
+  <!-- ========== PATH A: IN-TREE (LEFT) ========== -->
+  <g>
+    <!-- Path A header -->
+    <rect x="60" y="195" width="380" height="30" rx="6" fill="#27ae60" opacity="0.15" filter="url(#sketchy)"/>
+    <text x="250" y="216" text-anchor="middle" class="label-bold" style="fill:#27ae60; font-size:16px">Path A: In-Tree (CLR Runtime Hooks)</text>
+
+    <!-- CLR box -->
+    <rect x="80" y="235" width="340" height="175" rx="10" fill="#eafaf1" stroke="#27ae60" stroke-width="2.2" filter="url(#sketchy)"/>
+    <text x="250" y="258" text-anchor="middle" class="label-bold" style="fill:#27ae60">CLR Runtime (libamdhip64)</text>
+
+    <!-- hip_hrr.h/cpp -->
+    <rect x="105" y="270" width="290" height="28" rx="6" fill="#fff" stroke="#27ae60" stroke-width="1.5" filter="url(#sketchy2)"/>
+    <text x="250" y="290" text-anchor="middle" class="label" style="font-size:14px">hip_hrr.h / hip_hrr.cpp</text>
+
+    <!-- Hook points -->
+    <text x="108" y="318" class="label-sm">Hook points (following hip_apex.h pattern):</text>
+    <text x="118" y="336" class="label-xs">hipMalloc/Free  -->  hrr::record_malloc/free()</text>
+    <text x="118" y="352" class="label-xs">hipMemcpy       -->  hrr::record_memcpy()</text>
+    <text x="118" y="368" class="label-xs">ihipLaunchKernel -->  hrr::record_launch()</text>
+    <text x="118" y="384" class="label-xs">hipModuleLoad   -->  hrr::record_module_load()</text>
+    <text x="118" y="400" class="label-xs">loadCodeObject  -->  hrr::record_code_object()</text>
+
+    <!-- Env var callout -->
+    <rect x="130" y="418" width="240" height="24" rx="10" fill="#fadbd8" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="4,2" filter="url(#sketchy2)"/>
+    <text x="250" y="435" text-anchor="middle" class="env-label">HIP_RECORD=1</text>
+
+    <!-- Advantages -->
+    <text x="100" y="462" class="label-xs" style="fill:#27ae60">+ Full access to kernel metadata (COMGR)</text>
+    <text x="100" y="477" class="label-xs" style="fill:#27ae60">+ No external parsing needed</text>
+    <text x="100" y="492" class="label-xs" style="fill:#27ae60">+ Works on Linux + Windows</text>
+  </g>
+
+  <!-- ========== PATH B: OUT-OF-TREE (RIGHT) ========== -->
+  <g>
+    <!-- Path B header -->
+    <rect x="660" y="195" width="380" height="30" rx="6" fill="#2980b9" opacity="0.15" filter="url(#sketchy)"/>
+    <text x="850" y="216" text-anchor="middle" class="label-bold" style="fill:#2980b9; font-size:16px">Path B: Out-of-Tree (Portable)</text>
+
+    <!-- Interposer box -->
+    <rect x="680" y="235" width="340" height="175" rx="10" fill="#ebf5fb" stroke="#2980b9" stroke-width="2.2" filter="url(#sketchy)"/>
+    <text x="850" y="258" text-anchor="middle" class="label-bold" style="fill:#2980b9">LD_PRELOAD / Proxy DLL</text>
+
+    <!-- Linux -->
+    <rect x="705" y="270" width="135" height="50" rx="6" fill="#fff" stroke="#2980b9" stroke-width="1.5" filter="url(#sketchy2)"/>
+    <text x="772" y="290" text-anchor="middle" class="label-sm" style="font-weight:600">Linux</text>
+    <text x="772" y="306" text-anchor="middle" class="label-xs">libhrr_record.so</text>
+    <text x="772" y="318" text-anchor="middle" class="label-xs">dlsym(RTLD_NEXT)</text>
+
+    <!-- Windows -->
+    <rect x="860" y="270" width="135" height="50" rx="6" fill="#fff" stroke="#2980b9" stroke-width="1.5" filter="url(#sketchy2)"/>
+    <text x="928" y="290" text-anchor="middle" class="label-sm" style="font-weight:600">Windows</text>
+    <text x="928" y="306" text-anchor="middle" class="label-xs">amdhip64_7.dll</text>
+    <text x="928" y="318" text-anchor="middle" class="label-xs">proxy DLL</text>
+
+    <!-- Details -->
+    <text x="708" y="345" class="label-xs">ELF .note parser for kernel arg metadata</text>
+    <text x="708" y="361" class="label-xs">msgpack decoder for amdhsa.kernels[].args[]</text>
+    <text x="708" y="377" class="label-xs">Blind-scan fallback for assembly kernels</text>
+    <text x="708" y="393" class="label-xs">Forwards all calls to real HIP runtime</text>
+
+    <!-- Env var callout -->
+    <rect x="760" y="418" width="180" height="24" rx="10" fill="#d6eaf8" stroke="#2980b9" stroke-width="1.5" stroke-dasharray="4,2" filter="url(#sketchy2)"/>
+    <text x="850" y="435" text-anchor="middle" class="env-label" style="fill:#2980b9">HRR_RECORD=1</text>
+
+    <!-- Advantages -->
+    <text x="700" y="462" class="label-xs" style="fill:#2980b9">+ Works with pre-built ROCm packages</text>
+    <text x="700" y="477" class="label-xs" style="fill:#2980b9">+ No rebuild required</text>
+    <text x="700" y="492" class="label-xs" style="fill:#2980b9">+ Drop-in (LD_PRELOAD or DLL override)</text>
+  </g>
+
+  <!-- ========== CONVERGENCE ARROWS ========== -->
+  <path d="M 250,505 Q 250,530 480,540" stroke="#27ae60" stroke-width="2.2" fill="none" marker-end="url(#arrowhead)" filter="url(#sketchy2)"/>
+  <path d="M 850,505 Q 850,530 620,540" stroke="#2980b9" stroke-width="2.2" fill="none" marker-end="url(#arrowhead)" filter="url(#sketchy2)"/>
+  <text x="550" y="530" text-anchor="middle" class="label-sm" style="font-style:italic; fill:#666">same trace format</text>
+
+  <!-- ========== SHARED TRACE WRITER ========== -->
+  <rect x="330" y="545" width="440" height="95" rx="10" fill="#fef9e7" stroke="#f39c12" stroke-width="2.5" filter="url(#sketchy)"/>
+  <text x="550" y="570" text-anchor="middle" class="label-bold" style="fill:#e67e22; font-size:17px">Trace Archive (.hrr)</text>
+
+  <g transform="translate(355, 580)">
+    <rect x="0" y="0" width="95" height="45" rx="5" fill="#fff" stroke="#f39c12" stroke-width="1.2" filter="url(#sketchy2)"/>
+    <text x="47" y="17" text-anchor="middle" class="label-sm" style="font-weight:600">events.bin</text>
+    <text x="47" y="33" text-anchor="middle" class="label-xs">32B headers</text>
+
+    <rect x="110" y="0" width="95" height="45" rx="5" fill="#fff" stroke="#f39c12" stroke-width="1.2" filter="url(#sketchy2)"/>
+    <text x="157" y="17" text-anchor="middle" class="label-sm" style="font-weight:600">blobs/</text>
+    <text x="157" y="33" text-anchor="middle" class="label-xs">XXH3 dedup</text>
+
+    <rect x="220" y="0" width="95" height="45" rx="5" fill="#fff" stroke="#f39c12" stroke-width="1.2" filter="url(#sketchy2)"/>
+    <text x="267" y="17" text-anchor="middle" class="label-sm" style="font-weight:600">code_objects/</text>
+    <text x="267" y="33" text-anchor="middle" class="label-xs">.hsaco ELFs</text>
+
+    <rect x="330" y="0" width="72" height="45" rx="5" fill="#fff" stroke="#f39c12" stroke-width="1.2" filter="url(#sketchy2)"/>
+    <text x="366" y="17" text-anchor="middle" class="label-sm" style="font-weight:600">manifest</text>
+    <text x="366" y="33" text-anchor="middle" class="label-xs">.json</text>
+  </g>
+
+  <!-- Arrow down to tools -->
+  <line x1="550" y1="640" x2="550" y2="665" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)" filter="url(#sketchy2)"/>
+
+  <!-- ========== TOOLS ROW ========== -->
+  <!-- Replay -->
+  <rect x="60" y="675" width="240" height="70" rx="10" fill="#f4ecf7" stroke="#8e44ad" stroke-width="2.2" filter="url(#sketchy)"/>
+  <text x="180" y="700" text-anchor="middle" class="label-bold" style="fill:#8e44ad">hrr-replay</text>
+  <text x="180" y="718" text-anchor="middle" class="label-xs">Load code objects, restore buffers,</text>
+  <text x="180" y="732" text-anchor="middle" class="label-xs">launch kernels, verify outputs</text>
+
+  <!-- Bench -->
+  <rect x="340" y="675" width="240" height="70" rx="10" fill="#fdedec" stroke="#c0392b" stroke-width="2.2" filter="url(#sketchy)"/>
+  <text x="460" y="700" text-anchor="middle" class="label-bold" style="fill:#c0392b">hrr-bench</text>
+  <text x="460" y="718" text-anchor="middle" class="label-xs">Benchmark kernels, bisect regressions,</text>
+  <text x="460" y="732" text-anchor="middle" class="label-xs">stress test, NaN/Inf detection</text>
+
+  <!-- Export -->
+  <rect x="620" y="675" width="240" height="70" rx="10" fill="#eafaf1" stroke="#27ae60" stroke-width="2.2" filter="url(#sketchy)"/>
+  <text x="740" y="700" text-anchor="middle" class="label-bold" style="fill:#27ae60">hrr-bench export</text>
+  <text x="740" y="718" text-anchor="middle" class="label-xs">Standalone .hip + CMakeLists.txt</text>
+  <text x="740" y="732" text-anchor="middle" class="label-xs">--safe mode (randomize, keep zeros)</text>
+
+  <!-- Connect arrows from trace to tools -->
+  <path d="M 480,648 Q 400,660 180,675" stroke="#8e44ad" stroke-width="1.5" fill="none" marker-end="url(#arrowhead)" filter="url(#sketchy2)" stroke-dasharray="4,3"/>
+  <line x1="550" y1="648" x2="460" y2="675" stroke="#c0392b" stroke-width="1.5" fill="none" marker-end="url(#arrowhead)" filter="url(#sketchy2)" stroke-dasharray="4,3"/>
+  <path d="M 620,648 Q 680,660 740,675" stroke="#27ae60" stroke-width="1.5" fill="none" marker-end="url(#arrowhead)" filter="url(#sketchy2)" stroke-dasharray="4,3"/>
+
+  <!-- ========== RECORDING MODES (bottom-left) ========== -->
+  <rect x="900" y="675" width="175" height="70" rx="8" fill="#fef5e7" stroke="#e67e22" stroke-width="1.5" filter="url(#sketchy)"/>
+  <text x="988" y="695" text-anchor="middle" class="label-sm" style="font-weight:600; fill:#e67e22">Recording Modes</text>
+  <text x="915" y="713" class="label-xs">timeline  (API only)</text>
+  <text x="915" y="728" class="label-xs">inputs    (+ buffers, default)</text>
+  <text x="915" y="743" class="label-xs">full      (+ outputs)</text>
+
+  <!-- ========== PHASE LABELS ========== -->
+  <rect x="22" y="78" width="30" height="430" rx="4" fill="#27ae60" opacity="0.08"/>
+  <text x="37" y="300" text-anchor="middle" class="label-xs" style="fill:#27ae60; writing-mode: tb; font-size:13px" transform="rotate(0)">P H A S E  1</text>
+
+  <rect x="22" y="670" width="30" height="80" rx="4" fill="#8e44ad" opacity="0.08"/>
+  <text x="37" y="715" text-anchor="middle" class="label-xs" style="fill:#8e44ad; font-size:10px" transform="rotate(-90, 37, 715)">TOOLS</text>
+
+  <!-- Footer -->
+  <text x="550" y="790" text-anchor="middle" class="label-xs" style="fill:#999; font-size:11px">Phase 2 adds: environment/ (libs, Python env, loader scripts) for full application packaging</text>
+  <text x="550" y="808" text-anchor="middle" class="label-xs" style="fill:#bbb; font-size:10px">ROCm Build Infrastructure -- 2026-03-31</text>
+</svg>
