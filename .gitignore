@@ -45,3 +45,6 @@ __pycache__/
 
 # OS files
 Thumbs.db
+
+# iBoot credential — never commit
+egpu-iboot.env

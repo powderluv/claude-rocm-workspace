@@ -1,0 +1,351 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 1600 1320"
+     font-family="'Bradley Hand', 'Marker Felt', 'Comic Sans MS', 'Kalam', 'Patrick Hand', cursive">
+  <defs>
+    <!-- Hand-drawn roughen filters at a few different seeds so adjacent
+         shapes don't all wobble identically. -->
+    <filter id="rough1" x="-4%" y="-4%" width="108%" height="108%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.025" numOctaves="2" seed="1"/>
+      <feDisplacementMap in="SourceGraphic" scale="2.2"/>
+    </filter>
+    <filter id="rough2" x="-4%" y="-4%" width="108%" height="108%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7"/>
+      <feDisplacementMap in="SourceGraphic" scale="1.8"/>
+    </filter>
+    <filter id="rough3" x="-4%" y="-4%" width="108%" height="108%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" seed="13"/>
+      <feDisplacementMap in="SourceGraphic" scale="2.6"/>
+    </filter>
+    <filter id="rough-thick" x="-4%" y="-4%" width="108%" height="108%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.02" numOctaves="2" seed="21"/>
+      <feDisplacementMap in="SourceGraphic" scale="3"/>
+    </filter>
+
+    <!-- Hand-drawn arrow head. Two little strokes, not a filled triangle. -->
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6"
+            markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+      <path d="M1 1 L 10 6 L 1 11" fill="none" stroke="#2B2B2B"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+            filter="url(#rough2)"/>
+    </marker>
+
+    <!-- Paper tone and a soft yellow wash used for "notes". -->
+    <pattern id="paper" width="4" height="4" patternUnits="userSpaceOnUse">
+      <rect width="4" height="4" fill="#FCFBF6"/>
+    </pattern>
+  </defs>
+
+  <!-- Paper background. -->
+  <rect width="100%" height="100%" fill="url(#paper)"/>
+
+  <style>
+    text        { fill: #232323; font-size: 14px; }
+    .title      { font-size: 30px; }
+    .subtitle   { font-size: 15px; font-style: italic; fill: #555; }
+    .section    { font-size: 20px; }
+    .small      { font-size: 11px; fill: #3a3a3a; }
+    .tiny       { font-size: 10px; fill: #575757; font-style: italic; }
+    .label      { font-size: 13px; fill: #1d1d1d; }
+    .phase-num  { font-size: 15px; font-weight: bold; fill: #2A5C8F; }
+
+    .host-bg    { fill: #F4F1E8; stroke: #2B2B2B; stroke-width: 2.2; filter: url(#rough1); }
+    .enc-bg     { fill: #EFEBE0; stroke: #2B2B2B; stroke-width: 2.6; filter: url(#rough-thick); }
+    .card-bg    { fill: #FFFFFF; stroke: #2B2B2B; stroke-width: 2;
+                  stroke-dasharray: 5 3; filter: url(#rough2); }
+
+    .works      { fill: #DFF5E0; stroke: #2A6B32; stroke-width: 2;   filter: url(#rough1); }
+    .partial    { fill: #FDF0D9; stroke: #A65E10; stroke-width: 2;   filter: url(#rough2); }
+    .blocked    { fill: #FCE1E1; stroke: #A42020; stroke-width: 2;   filter: url(#rough3); }
+    .note       { fill: #FFFBE1; stroke: #8A7A1A; stroke-width: 1.8; filter: url(#rough2); }
+
+    .arrow      { stroke: #2B2B2B; stroke-width: 1.8; fill: none;
+                  stroke-linecap: round; stroke-linejoin: round;
+                  marker-end: url(#arrow); filter: url(#rough2); }
+    .arrow-fat  { stroke: #2B2B2B; stroke-width: 3;   fill: none;
+                  stroke-linecap: round; marker-end: url(#arrow);
+                  filter: url(#rough-thick); }
+    .arrow-dash { stroke-dasharray: 7 4; }
+  </style>
+
+  <!-- ======== Title ======== -->
+  <text class="title" x="800" y="48" text-anchor="middle">macOS eGPU Boot Flow — RX 9070 XT / gfx1201</text>
+  <text class="subtitle" x="800" y="74" text-anchor="middle">
+    Apple Silicon Mac ⟶ Thunderbolt 4 ⟶ Razer Core X V2 ⟶ Navi 48 (SOC22)
+  </text>
+
+  <!-- ======================================================
+       ①  MAC HOST  (y = 100 – 500)
+       ====================================================== -->
+  <rect class="host-bg" x="40" y="100" width="1520" height="400" rx="20"/>
+  <text class="section"  x="64" y="132">① Mac Host · Apple Silicon</text>
+
+  <!-- Python driver -->
+  <rect class="works" x="70"  y="160" width="310" height="160" rx="10"/>
+  <text x="88"  y="188" class="label">Python driver process</text>
+  <text x="88"  y="208" class="small">amd_gpu_driver.backends.macos</text>
+  <text x="88"  y="225" class="small">• IOKitClient   • psp_bootloader</text>
+  <text x="88"  y="242" class="small">• psp_ring      • psp_cmd</text>
+  <text x="88"  y="259" class="small">• smu           • gmc</text>
+  <text x="88"  y="276" class="small">• gfx_autoload  • gfx_firmware</text>
+  <text x="88"  y="305" class="tiny">user-space process · runs our bring-up</text>
+
+  <!-- ROCmGPU.dext -->
+  <rect class="works" x="430" y="160" width="330" height="160" rx="10"/>
+  <text x="448" y="188" class="label">ROCmGPU.dext · DriverKit</text>
+  <text x="448" y="208" class="small">IOConnect escape ABI</text>
+  <text x="448" y="225" class="small">• cfg_rd / cfg_wr        • mmio_rd / mmio_wr</text>
+  <text x="448" y="242" class="small">• map_bar (0, 2, 5)       • alloc_dma / free_dma</text>
+  <text x="448" y="259" class="small">• enable_msi              • reset (FLR)</text>
+  <text x="448" y="276" class="small">DART-backed DMA bus addresses</text>
+  <text x="448" y="305" class="tiny">kernel (DEXT) · signed for this host</text>
+
+  <!-- Arrows between Python and DEXT -->
+  <path class="arrow" d="M 385 210 C 405 210, 410 210, 425 210"/>
+  <text x="387" y="204" class="tiny">escape call</text>
+  <path class="arrow" d="M 425 250 C 410 250, 405 250, 385 250"/>
+  <text x="387" y="265" class="tiny">reply</text>
+
+  <!-- DART IOMMU -->
+  <rect class="works" x="810" y="160" width="320" height="160" rx="10"/>
+  <text x="828" y="188" class="label">DART IOMMU</text>
+  <text x="828" y="208" class="small">Apple Silicon system IOMMU</text>
+  <text x="828" y="225" class="small">DMA bus addr  ⟶  host phys page</text>
+  <text x="828" y="242" class="small">our allocs land at 0x8000_0000+</text>
+  <text x="828" y="259" class="small">coherent, cache-flushed for PCIe</text>
+  <text x="828" y="305" class="tiny">hardware IOMMU · transparent to Python</text>
+
+  <path class="arrow" d="M 765 240 L 805 240"/>
+
+  <!-- Host DRAM -->
+  <rect class="note" x="1180" y="160" width="350" height="160" rx="10"/>
+  <text x="1200" y="188" class="label">Host DRAM</text>
+  <text x="1200" y="208" class="small">• 1 MB SOS staging buffer (freed after load)</text>
+  <text x="1200" y="225" class="small">• 32 KB PSP KM ring  (bus 0x8000_0000)</text>
+  <text x="1200" y="242" class="small">• 4 KB PSP cmd + 4 KB fence buf</text>
+  <text x="1200" y="259" class="small">• 320 KB SMU ucode (freed after load)</text>
+  <text x="1200" y="305" class="tiny">DART maps each to a bus-visible address</text>
+
+  <path class="arrow" d="M 1135 240 L 1175 240"/>
+
+  <!-- Data-highway callouts -->
+  <rect class="note" x="70" y="360" width="1460" height="120" rx="10"/>
+  <text x="90" y="388" class="label">Data highways from host to GPU</text>
+  <text x="90"  y="410" class="small"><tspan font-weight="bold">MMIO (register plane):</tspan> Python → DEXT escape → PCIe BAR5 (512 KB) → GPU regs. Used for every C2PMSG_*, RLC_CNTL, GFX_IMU_*, MM_INDEX/MM_DATA…</text>
+  <text x="90"  y="430" class="small"><tspan font-weight="bold">DMA (firmware + mailbox):</tspan> alloc_dma → DART → bus addr 0x8000_0000+ → GPU reads over PCIe. Used for SOS components, PSP ring, SMU fw, fence/cmd bufs.</text>
+  <text x="90"  y="450" class="small"><tspan font-weight="bold">BAR0 VRAM window (256 MB):</tspan> Python mmap(BAR0) → CPU pointer → slice-copy into low VRAM. Used to build the 23 MB gfx12 autoload buffer.</text>
+  <text x="90"  y="470" class="small"><tspan font-weight="bold">BAR2 doorbell (2 MB):</tspan> reserved for compute-queue submission (later phase, not hot today).</text>
+
+  <!-- ======================================================
+       Thunderbolt / PCIe link
+       ====================================================== -->
+  <path class="arrow-fat arrow-dash" d="M 800 505 L 800 580"/>
+  <text x="820" y="540" class="label">Thunderbolt 4 · PCIe 3.0 x4  (ReBAR OFF → 256 MB VRAM BAR)</text>
+  <text x="820" y="562" class="tiny">~4 GB/s upstream bandwidth</text>
+
+  <!-- ======================================================
+       ②  RAZER CORE X V2  (y = 590 – 1220)
+       ====================================================== -->
+  <rect class="enc-bg" x="40" y="590" width="1520" height="640" rx="22"/>
+  <text class="section" x="64" y="625">② Razer Core X V2 · RX 9070 XT  (dev 0x7551 rev 0xC0)</text>
+  <text class="subtitle" x="64" y="646">Navi 48 · gfx1201 · GC 12.0.1 · SMU/PSP 14.0.3 · MMHUB 4.1.0 · SDMA 7.0.1 · NBIO 6.3.1</text>
+
+  <!-- Card footprint (dashed). -->
+  <rect class="card-bg" x="62" y="660" width="1110" height="550" rx="16"/>
+  <text x="80" y="682" class="label">RX 9070 XT  (Navi 48 silicon)</text>
+
+  <!-- ===== Row 1: PSP, SMU, NBIO, IMU ===== -->
+  <!-- PSP / MP0 -->
+  <rect class="works" x="82"  y="700" width="252" height="130" rx="10"/>
+  <text x="100" y="724" class="label">PSP · MP0</text>
+  <text x="100" y="744" class="small">base 0x16000 (DWORD)</text>
+  <text x="100" y="760" class="small">C2PMSG_81 — SOS sign-of-life ✓</text>
+  <text x="100" y="776" class="small">C2PMSG_35/36 — BL mailbox ✓</text>
+  <text x="100" y="792" class="small">KM ring created, FW loads OK</text>
+  <text x="100" y="820" class="tiny">PSP v14.0.3  · SOS, IMU via LOAD_IP_FW</text>
+
+  <!-- SMU / MP1 -->
+  <rect class="works" x="350" y="700" width="252" height="130" rx="10"/>
+  <text x="368" y="724" class="label">SMU · MP1</text>
+  <text x="368" y="744" class="small">base 0x16200 (DWORD)</text>
+  <text x="368" y="760" class="small">C2PMSG_66/82/90 mailbox ✓</text>
+  <text x="368" y="776" class="small">EnableAll(PWR_SOC) ✓</text>
+  <text x="368" y="792" class="small">DisallowGfxOff / AllowGfxOff ✓</text>
+  <text x="368" y="820" class="tiny">SMU 14.0.3 · SOC DPM running</text>
+
+  <!-- NBIO -->
+  <rect class="partial" x="618" y="700" width="252" height="130" rx="10"/>
+  <text x="636" y="724" class="label">NBIO</text>
+  <text x="636" y="744" class="small">bases 0 · 0x14 · 0xD20 · 0x10400</text>
+  <text x="636" y="760" class="small">vBIOS POST defaults used</text>
+  <text x="636" y="776" class="small">init module exists (Windows)</text>
+  <text x="636" y="792" class="small">not yet wired on macOS</text>
+  <text x="636" y="820" class="tiny">NBIO v6.3.1 · suspected GFX-gate owner</text>
+
+  <!-- IMU -->
+  <rect class="blocked" x="886" y="700" width="280" height="130" rx="10"/>
+  <text x="904" y="724" class="label">IMU (Instruction Mgmt Unit)</text>
+  <text x="904" y="744" class="small">GFX_IMU_* @ GC base_idx 1 (0xA000)</text>
+  <text x="904" y="760" class="small">IRAM / DRAM streamed + sealed ✓</text>
+  <text x="904" y="776" class="small">clear CRESET silently rejected ✗</text>
+  <text x="904" y="792" class="small">RESET_CTRL stuck at 0x30</text>
+  <text x="904" y="820" class="tiny">Current blocker — no GC writes take</text>
+
+  <!-- ===== Row 2: GC, MMHUB, GFXHUB, RLC ===== -->
+  <rect class="blocked" x="82"  y="850" width="252" height="120" rx="10"/>
+  <text x="100" y="872" class="label">GC · GFX block</text>
+  <text x="100" y="890" class="small">bases 0x1260 · 0xA000 · 0x1C000</text>
+  <text x="100" y="906" class="small">reads return plausible values</text>
+  <text x="100" y="922" class="small">writes silently dropped ✗</text>
+  <text x="100" y="938" class="small">power-gated until IMU releases</text>
+
+  <rect class="partial" x="350" y="850" width="252" height="120" rx="10"/>
+  <text x="368" y="872" class="label">MMHUB · system hub</text>
+  <text x="368" y="890" class="small">base 0x1A000</text>
+  <text x="368" y="906" class="small">vBIOS: FB aperture = VRAM only</text>
+  <text x="368" y="922" class="small">init_mmhub() skeleton exists</text>
+  <text x="368" y="938" class="small">enabling TLB breaks PSP DMA ⚠️</text>
+
+  <rect class="partial" x="618" y="850" width="252" height="120" rx="10"/>
+  <text x="636" y="872" class="label">GFXHUB · GFX-side hub</text>
+  <text x="636" y="890" class="small">registers inside GC block</text>
+  <text x="636" y="906" class="small">VM_CONTEXT + TLB live here</text>
+  <text x="636" y="922" class="small">untouched — unreachable today</text>
+  <text x="636" y="938" class="small">opens once GC writes take</text>
+
+  <rect class="blocked" x="886" y="850" width="280" height="120" rx="10"/>
+  <text x="904" y="872" class="label">RLC</text>
+  <text x="904" y="890" class="small">RLC_CNTL @ GC 0x4C00 (idx 1)</text>
+  <text x="904" y="906" class="small">GPM_THREAD_ENABLE @ 0x4C45</text>
+  <text x="904" y="922" class="small">waiting for IMU to release it</text>
+  <text x="904" y="938" class="small">autoload buf is prepared ✓</text>
+
+  <!-- ===== Row 3: SDMA, VCN, IP discovery, metadata ===== -->
+  <rect class="partial" x="82"  y="990" width="252" height="120" rx="10"/>
+  <text x="100" y="1012" class="label">SDMA0</text>
+  <text x="100" y="1030" class="small">SDMA 7.0.1 — ucode staged in</text>
+  <text x="100" y="1046" class="small">autoload buf (SDMA_UCODE_TH0)</text>
+  <text x="100" y="1062" class="small">self-loads when RLC wakes</text>
+  <text x="100" y="1080" class="small">driven via doorbell later</text>
+
+  <rect class="card-bg" x="350" y="990" width="252" height="120" rx="10" stroke-dasharray="3 2"/>
+  <text x="368" y="1012" class="label">VCN · JPEG (not used)</text>
+  <text x="368" y="1030" class="small">VCN @ base 0x7800 · 0x7E00</text>
+  <text x="368" y="1046" class="small">video en/decode engines</text>
+  <text x="368" y="1062" class="small">out of scope for compute</text>
+
+  <rect class="works" x="618" y="990" width="252" height="120" rx="10"/>
+  <text x="636" y="1012" class="label">IP discovery</text>
+  <text x="636" y="1030" class="small">table @ VRAM_SIZE - 64 KB</text>
+  <text x="636" y="1046" class="small">read via MM_INDEX / MM_DATA</text>
+  <text x="636" y="1062" class="small">bases confirmed on live card ✓</text>
+  <text x="636" y="1080" class="small">see gfx1201-register-bases.md</text>
+
+  <rect class="note" x="886" y="990" width="280" height="120" rx="10"/>
+  <text x="904" y="1012" class="label">Metadata / shared layout</text>
+  <text x="904" y="1030" class="small">MP0 &amp; MP1 share the same 15 bases</text>
+  <text x="904" y="1046" class="small">GC uses base_idx 0 + 1 heavily</text>
+  <text x="904" y="1062" class="small">MMHUB stays on base_idx 0</text>
+  <text x="904" y="1080" class="small">SOC22 layout (gfx1201)</text>
+
+  <!-- Small card footer -->
+  <text x="80" y="1198" class="tiny">32 GB HBM / GDDR6 VRAM · [0x80_0000_0000 … 0x87_F700_0000] MC range</text>
+
+  <!-- ===== VRAM detailed column on the right ===== -->
+  <rect class="works" x="1200" y="700" width="340" height="510" rx="12"/>
+  <text x="1220" y="726" class="label">VRAM · 32 GB · FB aperture</text>
+  <text x="1220" y="744" class="small">MC range 0x80_0000_0000 – 0x87_F700_0000</text>
+
+  <!-- VRAM contents (top to bottom = low VRAM offset to high). -->
+  <rect class="works" x="1218" y="762" width="304" height="100" rx="8"/>
+  <text x="1232" y="784" class="label">0 … 23 MB : Autoload buffer</text>
+  <text x="1232" y="802" class="small">TOC-driven layout:</text>
+  <text x="1232" y="817" class="small">RLC_G · SRLG · SRLS · IRAM · DRAM</text>
+  <text x="1232" y="831" class="small">SDMA_TH0 · RS64 PFP/ME/MEC +stacks</text>
+  <text x="1232" y="845" class="small">MES P0/P1 ucode+data · RLC_TOC</text>
+  <text x="1232" y="858" class="small">populated via BAR0 slice-copy ✓</text>
+
+  <rect class="card-bg" x="1218" y="876" width="304" height="80" rx="8" stroke-dasharray="2 2"/>
+  <text x="1232" y="898" class="label">... compute / graphics state ...</text>
+  <text x="1232" y="916" class="small">reserved — not touched until</text>
+  <text x="1232" y="931" class="small">Phase 12 unblocks and compute</text>
+  <text x="1232" y="946" class="small">queues come up</text>
+
+  <rect class="works" x="1218" y="970" width="304" height="80" rx="8"/>
+  <text x="1232" y="992" class="label">VRAM_SIZE - 128 KB : SMU driver table</text>
+  <text x="1232" y="1008" class="small">MC 0x87_F7FE_0000 (16 KB)</text>
+  <text x="1232" y="1024" class="small">registered via SetDriverDramAddr</text>
+  <text x="1232" y="1040" class="small">SMU-writable (inside FB aperture)</text>
+
+  <rect class="works" x="1218" y="1064" width="304" height="80" rx="8"/>
+  <text x="1232" y="1086" class="label">VRAM_SIZE - 64 KB : IP discovery</text>
+  <text x="1232" y="1102" class="small">MC 0x87_F7FF_0000</text>
+  <text x="1232" y="1118" class="small">populated by vBIOS POST</text>
+  <text x="1232" y="1134" class="small">read via MM_INDEX/MM_DATA</text>
+
+  <rect class="note" x="1218" y="1158" width="304" height="44" rx="8"/>
+  <text x="1232" y="1178" class="small">BAR0 windows low VRAM (0 … 256 MB)</text>
+  <text x="1232" y="1192" class="small">— enough to reach all the above.</text>
+
+  <!-- ===== Arrows connecting key data flows ===== -->
+  <!-- MMIO into PSP -->
+  <path class="arrow" d="M 208 660 C 208 650, 208 640, 208 635"/>
+  <text x="100" y="652" class="tiny">C2PMSG_35/36 · MMIO</text>
+
+  <!-- MMIO into SMU -->
+  <path class="arrow" d="M 476 660 C 476 650, 476 640, 476 635"/>
+  <text x="380" y="652" class="tiny">C2PMSG_66/82/90 · MMIO</text>
+
+  <!-- BAR0 → autoload region -->
+  <path class="arrow-fat" d="M 1172 808 L 1215 808"/>
+  <text x="1040" y="800" class="tiny">BAR0 slice-copy</text>
+
+  <!-- SetDriverDramAddr → SMU table in VRAM -->
+  <path class="arrow" d="M 476 740 C 900 720, 1180 950, 1215 1005"/>
+  <text x="880" y="950" class="tiny">SetDriverDramAddr → MC 0x87_F7FE_0000</text>
+
+  <!-- ======================================================
+       ③  Phase flow pane on the right edge of host block
+       ====================================================== -->
+  <rect class="note" x="40" y="1238" width="1520" height="68" rx="10"/>
+  <text class="section" x="64" y="1266">Legend</text>
+  <rect class="works"   x="220" y="1252" width="24" height="18" rx="4"/>
+  <text x="254" y="1267" class="label">works end-to-end</text>
+  <rect class="partial" x="430" y="1252" width="24" height="18" rx="4"/>
+  <text x="464" y="1267" class="label">partial · skeleton present, not on hot path</text>
+  <rect class="blocked" x="840" y="1252" width="24" height="18" rx="4"/>
+  <text x="874" y="1267" class="label">blocked · cause identified, fix pending</text>
+  <rect class="note"    x="1170" y="1252" width="24" height="18" rx="4"/>
+  <text x="1204" y="1267" class="label">annotation / reference</text>
+
+  <text x="64" y="1295" class="tiny">Boot phases 1–14 listed in plans/macos-egpu-bootflow.md · phase numbers map to sections there.</text>
+
+  <!-- ======================================================
+       Phase overlay — small numbered callouts next to relevant blocks
+       ====================================================== -->
+  <g font-size="13" fill="#1E4A7A">
+    <circle cx="160" cy="180" r="14" fill="#FFF" stroke="#1E4A7A" stroke-width="1.8" filter="url(#rough2)"/>
+    <text x="160" y="185" text-anchor="middle" class="phase-num">1</text>
+
+    <circle cx="540" cy="180" r="14" fill="#FFF" stroke="#1E4A7A" stroke-width="1.8" filter="url(#rough2)"/>
+    <text x="540" y="185" text-anchor="middle" class="phase-num">2</text>
+
+    <circle cx="940" cy="180" r="14" fill="#FFF" stroke="#1E4A7A" stroke-width="1.8" filter="url(#rough2)"/>
+    <text x="940" y="185" text-anchor="middle" class="phase-num">3</text>
+
+    <circle cx="194" cy="718" r="14" fill="#FFF" stroke="#1E4A7A" stroke-width="1.8" filter="url(#rough2)"/>
+    <text x="194" y="723" text-anchor="middle" class="phase-num">5</text>
+
+    <circle cx="462" cy="718" r="14" fill="#FFF" stroke="#1E4A7A" stroke-width="1.8" filter="url(#rough2)"/>
+    <text x="462" y="723" text-anchor="middle" class="phase-num">7–10</text>
+
+    <circle cx="1370" cy="790" r="14" fill="#FFF" stroke="#1E4A7A" stroke-width="1.8" filter="url(#rough2)"/>
+    <text x="1370" y="795" text-anchor="middle" class="phase-num">11</text>
+
+    <circle cx="1018" cy="718" r="14" fill="#FFF" stroke="#1E4A7A" stroke-width="1.8" filter="url(#rough2)"/>
+    <text x="1018" y="723" text-anchor="middle" class="phase-num">12</text>
+
+    <circle cx="1020" cy="870" r="14" fill="#FFF" stroke="#1E4A7A" stroke-width="1.8" filter="url(#rough2)"/>
+    <text x="1020" y="875" text-anchor="middle" class="phase-num">13</text>
+  </g>
+</svg>
