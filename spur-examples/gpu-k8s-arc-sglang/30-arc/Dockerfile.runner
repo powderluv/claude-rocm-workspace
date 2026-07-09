@@ -1,0 +1,21 @@
+# ROCm-capable GitHub Actions runner image for the sglang fork CI.
+# Stock ghcr.io/actions/actions-runner has no ROCm, docker CLI, or kubectl.
+# Build + push:
+#   docker build -t ghcr.io/powderluv/sglang-runner:rocm -f Dockerfile.runner .
+#   docker push ghcr.io/powderluv/sglang-runner:rocm      # record the digest in versions.lock.md
+FROM ghcr.io/actions/actions-runner:latest
+USER root
+
+# docker CLI (talks to the dind sidecar), kubectl (used by the CPU deploy scale set), ROCm userspace.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      docker.io curl ca-certificates gnupg && \
+    curl -fsSL https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl \
+      -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl && \
+    # ROCm runtime (rocminfo/rocm-smi for the CI arch assertion). Pin the ROCm apt repo version.
+    # See https://rocm.docs.amd.com for the exact repo line for your ROCm release.
+    # apt-get install -y rocminfo rocm-smi-lib   # <- enable once the ROCm apt repo is added
+    (getent group render || groupadd render) && (getent group video || groupadd video) && \
+    usermod -aG docker,video,render runner && \
+    rm -rf /var/lib/apt/lists/*
+
+USER runner

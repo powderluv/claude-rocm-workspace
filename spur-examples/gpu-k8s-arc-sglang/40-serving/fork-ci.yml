@@ -1,0 +1,41 @@
+# Goes in the sglang fork at .github/workflows/fork-ci.yml (github.com/powderluv/sglang).
+# Reuses sglang's own scripts/ci/amd/*.sh unchanged; adds a gated deploy of the serving pod.
+# Prereq on the fork: disable the upstream *amd*/nightly* workflows (they target org-only runners/
+# secrets) and set fork secrets HF_TOKEN, optionally DOCKERHUB_AMD_USERNAME/TOKEN.
+name: Fork AMD CI
+on:
+  workflow_dispatch: {}
+  push: { branches: [main] }
+
+jobs:
+  amd-gpu-test:
+    runs-on: linux-mi35x-gpu-1                 # == runnerScaleSetName; matches ^linux-(mi..)-gpu-[0-9]+ -> gfx950
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clear VRAM
+        run: bash scripts/ci/amd/ensure_vram_clear.sh rocm
+      - name: Start ROCm container (bypass hardcoded LOCAL_DOCKER_REGISTRY via --custom-image)
+        env: { HF_TOKEN: "${{ secrets.HF_TOKEN }}" }
+        run: bash scripts/ci/amd/amd_ci_start_container.sh --custom-image rocm/sgl-dev:PINNED-mi35x-tag
+      - name: Assert GPU arch (fail loud if the image/arch mismatched)
+        run: bash scripts/ci/amd/amd_ci_exec.sh rocminfo | grep -q gfx950
+      - name: Install deps
+        run: bash scripts/ci/amd/amd_ci_install_dependency.sh
+      - name: Run small AMD suite
+        env: { HF_TOKEN: "${{ secrets.HF_TOKEN }}" }
+        run: |
+          bash scripts/ci/amd/amd_ci_exec.sh -w /sglang-checkout/test \
+            python3 run_suite.py --hw amd --suite stage-a-test-1-gpu-small-amd
+
+  deploy:
+    needs: [amd-gpu-test]
+    if: success() && github.ref == 'refs/heads/main'
+    runs-on: linux-cpu-deploy                  # non-GPU scale set; runs as SA sglang-deployer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy serving pod to the cluster (in-cluster SA token)
+        run: |
+          # cluster-deploy/40-serving/ is vendored into the fork (or checked out from the spur deploy tree)
+          kubectl apply -f deploy/k8s/sglang-service-amd.yaml
+          kubectl apply -f deploy/k8s/ingress.yaml
+          kubectl -n sglang rollout status deploy/sglang --timeout=20m
