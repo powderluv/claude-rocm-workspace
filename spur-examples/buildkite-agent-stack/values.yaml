@@ -1,0 +1,61 @@
+# agent-stack-k8s values for the SPUR-managed k0s MI355X/gfx950 cluster.
+# Chart: oci://ghcr.io/buildkite/helm/agent-stack-k8s  (pinned 0.45.0 — needs k8s >= 1.29)
+# One Helm release = ONE controller = ONE Buildkite queue. Run one release per queue/SKU you serve
+# (e.g. amd_mi355_1 -> gpu 1, amd_mi355_2 -> gpu 2). Fill the __PLACEHOLDERS__ per release:
+#   __QUEUE__ __GPU_COUNT__ (per queue) and the per-cluster __SCRATCH_ROOT__ (node scratch mount) +
+#   __RENDER_GID__ (GID owning /dev/kfd; `getent group render`). See install.md.
+#
+# NOTE: this is the SIMPLE dind:false NATIVE lane (tests run in-pod, no docker daemon). vLLM's
+# COMMITTED steps are dind:true and need the full config in buildkite-vllm-values.yaml instead — use
+# THIS file only for a trusted pipeline that emits dind:false steps.
+#
+# Validated token-independently: the pod shape below (amd.com/gpu + devshm Memory + GPU-node pin +
+# supplementalGroups video/render) runs and rocminfo reports gfx950 on this cluster (see gpu-smoke.yaml).
+
+# Auth: reference a pre-created Secret (key BUILDKITE_AGENT_TOKEN) instead of putting the token here:
+#   kubectl -n buildkite create secret generic buildkite-agent-token \
+#     --from-literal=BUILDKITE_AGENT_TOKEN=<CLUSTER_AGENT_TOKEN>
+agentStackSecret: buildkite-agent-token
+
+config:
+  tags:
+    - queue=__QUEUE__            # MUST match the vLLM step's agents.queue (e.g. amd_mi355_2)
+  max-in-flight: 4              # cap concurrent GPU job pods this controller creates (tune vs ARC)
+
+  # SECURITY — untrusted public-repo (vLLM) fork PRs:
+  #   For a TRUSTED lane (a queue only trusted pipelines target) leave this false so vLLM's own
+  #   `dind:false` native steps (which use the `kubernetes` plugin) are honored.
+  #   For an UNTRUSTED lane (fork PRs can reach it) set this true: it REJECTS any job whose pipeline
+  #   YAML uses the `kubernetes` plugin, so a fork cannot override the pod spec below. With it ON,
+  #   the pod spec is whatever this controller supplies (pod-spec-patch), not the step's.
+  prohibit-kubernetes-plugin: false
+  # keep OFF regardless:
+  # allow-pod-spec-patch-unsafe-command-modification: false
+
+  # pod-spec-patch is strategic-merged into EVERY job pod this controller creates. `container-0` is
+  # the user command container agent-stack-k8s builds for a step.
+  pod-spec-patch:
+    nodeSelector:
+      spur.amd.com/compute: "true"           # GPU workers only
+    securityContext:
+      seccompProfile: { type: Unconfined }
+      supplementalGroups: [44, __RENDER_GID__]   # video=44, render=__RENDER_GID__ -> open /dev/kfd
+    containers:
+      - name: container-0
+        resources:
+          limits:
+            amd.com/gpu: "__GPU_COUNT__"     # whole GPUs; match the queue's SKU count (1/2/4/8)
+        volumeMounts:
+          - { name: devshm, mountPath: /dev/shm }
+          # vLLM native mode expects a persistent HF cache (VLLM_CI_REQUIRE_PERSISTENT_HF_CACHE=1).
+          # Per-node hostPath on the big scratch disk (survives pods, shared per node). Adjust the
+          # in-container path to the step's HF_HOME when wiring real vLLM steps (M2).
+          - { name: hf-cache, mountPath: /root/.cache/huggingface }
+        # imagePullSecrets for private rocm/vllm-* images are set on the step or here once we have
+        # registry creds:  imagePullSecrets: [{ name: docker-config }]
+    volumes:
+      - { name: devshm, emptyDir: { medium: Memory, sizeLimit: 16Gi } }
+      - { name: hf-cache, hostPath: { path: __SCRATCH_ROOT__/hf-cache, type: DirectoryOrCreate } }
+
+# The controller Deployment itself is CPU-only — do NOT pin it to GPU nodes:
+# nodeSelector: {}   (leave default; only pod-spec-patch above pins the JOB pods)

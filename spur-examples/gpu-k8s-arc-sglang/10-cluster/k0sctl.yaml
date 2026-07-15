@@ -53,7 +53,12 @@ spec:
             wireguard: false                   # spur0 already encrypts; do NOT enable Calico's own WireGuard.
             ipAutodetectionMethod: "interface=spur0"  # peer BGP + advertise routes over spur0 (real k0s field;
                                                # Calico's default 'first-found' would wrongly pick the underlay NIC).
-            mtu: 1420                          # ~ spur0 MTU (no VXLAN header to subtract); DERIVE from real spur0 MTU.
+            overlay: Never                     # disable Calico's own encap. NOTE (verified on hw 2026-07-09):
+                                               # k0s `mode: bird` ALONE leaves the IPPool at ipipMode:Always
+                                               # (IPIP-over-WireGuard = a 2nd overlay). If pods still route via
+                                               # tunl0 after install, patch it: `kubectl patch ippool
+                                               # default-ipv4-ippool --type merge -p '{"spec":{"ipipMode":"Never"}}'`.
+            mtu: 1420                          # ~ spur0 MTU (no VXLAN/IPIP header to subtract); DERIVE from real spur0.
         # REQUIRES the SPUR mesh to CARRY pod CIDRs (see ../00-network): each peer's WireGuard AllowedIPs must
         # include that node's pod /24, and per-node pod CIDRs must be deterministic (kube-controller-manager
         # --allocate-node-cidrs -> node.spec.podCIDR). Otherwise BGP advertises routes but WireGuard drops the

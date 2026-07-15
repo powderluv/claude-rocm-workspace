@@ -1,7 +1,34 @@
 # Plan: Native Kubernetes on SPUR + ARC + `powderluv/sglang` auto-deploy
 
-Status: proposal for review. Target repos: **`rocm/spur`** (SPUR moved here from `powderluv/spur`), `powderluv/sglang` (fork of `sgl-project/sglang`). Concrete k0s manifests: `spur-examples/gpu-k8s-arc-sglang/`.
+Status: **in deployment** — the coexist-first stack (M0–M4) is live on the 4-node MI355X cluster and M5 fork CI is in progress as of 2026-07-09; see **Deployment status** immediately below. Target repos: **`rocm/spur`** (SPUR moved here from `powderluv/spur`), `powderluv/sglang` (fork of `sgl-project/sglang`). Concrete k0s manifests: `spur-examples/gpu-k8s-arc-sglang/`.
 Author aid: research + 3-way architecture panel + 3 adversarial review passes (feasibility / external-correctness / completeness). Review fixes are folded into the milestones below.
+
+---
+
+## Deployment status — live (2026-07-09)
+
+The coexist-first stack has been brought up and validated on the real 4-node MI355X cluster. **M0–M4 are live; M5 (fork CI on the scale set) is in progress.** Nothing below is a simulation — every row was exercised over SSH on the hardware described in §1.
+
+| Milestone | State | On-hardware evidence |
+|---|---|---|
+| **M0** Preflight gates | ✅ live | gfx950 arch, worker↔worker reachability (0% loss), per-node egress — all pass |
+| **M1** k0s bring-up + CNI | ✅ live | k0s v1.34.9 controller on the head + 4 workers `Ready` over the WireGuard mesh; Calico **bird** native routing (single overlay) |
+| **M2** GPU device plugin | ✅ live | **32× MI355X** schedulable (`amd.com/gpu`); a GPU pod runs `rocminfo` → gfx950 |
+| **M3** Fork + ARC + auth | ✅ live | `powderluv/sglang` fork; ARC controller + GitHub App; scale-set listener connected |
+| **M4** Runner image + dind scale set | ✅ live | hand-authored dind spec (`/dev/kfd`+`/dev/dri` in the sidecar); full-ROCm runner image; dind store on the 28 TB scratch |
+| **M5** Fork CI on the scale set | ◐ in progress | a real GitHub GPU job ran end-to-end (`rocminfo` gfx950 via dind); the full sglang suite is re-running after the runner-image + dind-storage fixes below |
+| **M6** Gated serving auto-deploy | ☐ pending | manifests authored (`40-serving/`), not yet deployed |
+| **M6.5** Backend RoCE RDMA / DI | ☐ pending | fabric present + link-up at the OS level, **not yet plumbed into k8s** (see below) |
+| **M7-ops / M8 / M9** | ☐ pending | external access, native SPUR integration, HA |
+
+**Bring-up findings (the non-obvious bits, all folded into `spur-examples/`):**
+
+- **Calico "bird" still double-overlaid.** `mode: bird` alone left the IPPool at `ipipMode: Always`, i.e. IPIP *over* WireGuard. Patching the IPPool to `ipipMode: Never` gives true native routing on `spur0`; each peer's WireGuard `AllowedIPs` then carries the pod /26 blocks.
+- **k0s device-plugin socket path.** The kubelet root is `/var/lib/k0s/kubelet`, but the plugin-registration socket stays at the **standard** `/var/lib/kubelet/device-plugins` — the AMD device-plugin manifest must use the standard path, not a k0s-rooted one.
+- **dind needs the big disk.** The mi35x sglang image is tens of GB; pulled into the 123 GB root it tripped `NodeHasDiskPressure` and the runner pod was **Evicted** mid-pull. Fix: dind's `/var/lib/docker` is a hostPath on the **28 TB `/mnt/m2m_nobackup`** scratch, one subdir per pod (`subPathExpr`).
+- **Full ROCm on the runner via TheRock.** The runner image installs the full ROCm release from TheRock's multi-arch pip index (`rocm[libraries,device-gfx950]`, ROCm 7.15 nightly) so `rocm-smi`/`rocminfo`/`amd-smi` run on the runner host for VRAM-clear + the arch assertion (plus a `libdrm_amdgpu.so` shim the base image lacks).
+- **Backend RDMA is wired but not exposed.** Each worker has **8× AMD Pensando `ionic` RoCEv2 NICs**, all `ACTIVE / LINK_UP` with the full RoCE stack loaded (`ionic_rdma`, `rdma_cm`, `ib_uverbs`) — but k8s advertises no `rdma/*` resources and there is no Multus/SR-IOV plugin yet. That is exactly the M6.5 work below.
+- **CNCF conformance harness hangs.** Every functional test passes (cross-node pods, DNS, GPU scheduling), but upstream `e2e.test` v1.34.9 deadlocks in `SynchronizedBeforeSuite` (0/424 specs) under both sonobuoy and hydrophone — a harness/topology issue, not a cluster fault; under investigation.
 
 ---
 
@@ -28,7 +55,7 @@ This **inverts** SPUR's only current k8s story (scheduling *onto* an existing cl
 | GPU worker | `gpu-node-3` | <gpu-node-3-ip> | same |
 | GPU worker | `gpu-node-4` | <gpu-node-4-ip> | same |
 
-All four workers are **8× AMD Instinct MI355X, gfx950, SPX compute partition** (whole-GPU → a clean `amd.com/gpu: 8` per node; **32 GPUs total**), `/dev/kfd` present, Ubuntu 24.04 / kernel 6.8. **All M0 hard gates already pass:** (1) gfx950 is a sglang-supported arch; (2) nodes are mutually reachable on a flat, routed private /16 underlay (gpu-node-1→gpu-node-4 = 0% loss, 0.3 ms) so a full WireGuard mesh is trivially feasible — no relay overlay needed; (3) every node has direct internet egress (ghcr.io reachable). Nothing is installed yet (greenfield: no spur, no k8s). **Access:** `ssh head-node` (head) and `ssh gpu-node-{1..4}` (workers), user the provided login (via the site jump host).
+All four workers are **8× AMD Instinct MI355X, gfx950, SPX compute partition** (whole-GPU → a clean `amd.com/gpu: 8` per node; **32 GPUs total**), `/dev/kfd` present, Ubuntu 24.04 / kernel 6.8. **All M0 hard gates already pass:** (1) gfx950 is a sglang-supported arch; (2) nodes are mutually reachable on a flat, routed private /16 underlay (gpu-node-1→gpu-node-4 = 0% loss, 0.3 ms) so a full WireGuard mesh is trivially feasible — no relay overlay needed; (3) every node has direct internet egress (ghcr.io reachable). (This was greenfield at plan time; as of 2026-07-09 the coexist-first cluster is deployed — see **Deployment status** above.) **Access:** `ssh head-node` (head) and `ssh gpu-node-{1..4}` (workers), user the provided login (via the site jump host).
 
 > Because the underlay is already flat and sub-millisecond, the WireGuard mesh here is about **encryption + SPUR-native fabric ownership**, not reachability — the "worker↔worker broken by hub-and-spoke" risk that dominates the generic plan is largely moot on this cluster (full-mesh reconciliation is straightforward since every endpoint is directly reachable). k0s can even run on the raw underlay IPs if the mesh is deferred.
 

@@ -1,0 +1,155 @@
+# Buildkite agent hooks for vLLM runners — vendored from the vLLM/AMD reference config.
+# Retargeted to the `buildkite` namespace (reference used `buildkite-vllm`).
+# NOTE: reference assumes WekaFS (RWX) for the caches; on this cluster the git-mirror/HF/docker
+# caches are per-node hostPath on /mnt scratch (RWO local-path can't be shared across nodes), so
+# BUILDKITE_GIT_MIRRORS_SKIP_UPDATE may need to be false unless a per-node warmer runs.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkite-agent-hooks
+  namespace: buildkite
+data:
+  environment: |-
+    #!/bin/bash
+    # Force bash for all commands — the container image's /bin/sh may be dash
+    # which doesn't support [[ ]] syntax used by upstream bootstrap scripts.
+    export BUILDKITE_SHELL="/bin/bash"
+    # K8s pods run checkout and commands as different uids — git rejects the repo
+    # without this. Bare metal doesn't need it because everything runs as buildkite-agent.
+    git config --global --add safe.directory '*'
+    export BUILDKITE_GIT_CLONE_FLAGS="-v --filter=blob:none"
+    # Git mirrors DROPPED for this cluster: the reference keeps a shared mirror on WekaFS updated by
+    # a warmer Deployment; we have no shared FS + no warmer, so pods clone fresh (blobless, fast).
+    # HuggingFace cache (per-node hostPath on /mnt here; WekaFS/shared on the reference)
+    export HF_HOME="/home/buildkite-agent/huggingface"
+    export HF_DATASETS_CACHE="/home/buildkite-agent/huggingface/datasets"
+  pre-command: |-
+    #!/bin/bash
+    # Disk usage (HF-cache) — printed to the public build log so cache-fill is visible.
+    # Non-fatal: never let this diagnostic affect the build.
+    df -h || true
+
+    # Make the workspace writable for all queues. The checkout container can run
+    # as a different uid than the command container, so perf-eval jobs (which
+    # create .venv / results / .hf-cache directly in the workspace) otherwise
+    # hit 'Permission denied'. (Build/amd-cpu jobs already chmod this below.)
+    sudo chmod -R 777 /workspace/build >/dev/null 2>&1 || true
+
+    IS_BUILD_JOB=false
+    if echo "${BUILDKITE_AGENT_META_DATA_QUEUE:-}" | grep -q "amd-cpu"; then
+      IS_BUILD_JOB=true
+      echo "=== Build job (amd-cpu queue) ==="
+      sudo chmod -R 777 /workspace/build >/dev/null 2>&1 || true
+      # Bootstrap script hardcodes /var/lib/buildkite-agent/.cargo/env (bare metal path).
+      # Create it pointing to the actual HOME so 'source' works after cargo install.
+      sudo mkdir -p /var/lib/buildkite-agent/.cargo/bin >/dev/null 2>&1 || true
+      echo 'export PATH="/home/buildkite-agent/.cargo/bin:$PATH"' | sudo tee /var/lib/buildkite-agent/.cargo/env >/dev/null 2>&1 || true
+    fi
+
+    # --- GPU process logging (test jobs only) ---
+    if [ "${IS_BUILD_JOB}" = "false" ]; then
+      rocm-smi --showpids 2>/dev/null
+      rocm-smi --showmemuse 2>/dev/null
+      ps aux | grep -i vllm
+
+      # --- Render devices ---
+      export BUILDKITE_AGENT_META_DATA_RENDER_DEVICES=""
+      export PREFIX="--device /dev/dri/"
+      for devices in $(ls -la /dev/dri/ | grep renderD | awk '{print $10}'); do
+        export BUILDKITE_AGENT_META_DATA_RENDER_DEVICES="$BUILDKITE_AGENT_META_DATA_RENDER_DEVICES $PREFIX$devices"
+      done
+    fi
+    # amd-ci / ci / vLLM test jobs only — skip dind/docker for perf-eval
+    if [ "${BUILDKITE_PIPELINE_SLUG}" != "perf-eval" ]; then
+      # --- Wait for Docker ---
+      sleep 30
+      sudo chown root:docker /var/run/docker.sock
+      count=0
+      while [ $count -lt 20 ]; do
+        if docker info >/dev/null 2>&1; then
+          echo "Docker is up. Continuing..."
+          break
+        fi
+        echo "Waiting for Docker..."
+        sleep 30
+        count=$((count+1))
+      done
+      if ! docker info >/dev/null 2>&1; then
+        echo "No Docker. Continuing job to fail..."
+        exit 1
+      fi
+
+      # --- Docker Hub login (silent) ---
+      if [ -f "/home/buildkite-agent/.docker/config.json" ]; then
+        DOCKER_USER=$(python3 -c "import json; print(json.load(open('/home/buildkite-agent/.docker/config.json'))['auths']['https://index.docker.io/v1/']['username'])" 2>/dev/null)
+        DOCKER_PASS=$(python3 -c "import json; print(json.load(open('/home/buildkite-agent/.docker/config.json'))['auths']['https://index.docker.io/v1/']['password'])" 2>/dev/null)
+        if [ -n "${DOCKER_USER}" ] && [ -n "${DOCKER_PASS}" ]; then
+          echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin >/dev/null 2>&1
+        fi
+        unset DOCKER_USER DOCKER_PASS
+      fi
+
+      # --- Build jobs stop here — no model cache, no image pull needed ---
+      if [ "${IS_BUILD_JOB}" = "true" ]; then
+        echo "Build job ready — Docker is up, login done"
+        return 0 2>/dev/null || exit 0
+      fi
+
+      # ============================================================
+      # Everything below is for GPU test jobs only
+      # ============================================================
+
+      # --- ModelScope cache (stored in HuggingFace cache) ---
+      echo "Setting up ModelScope cache"
+      export MODELSCOPE_CACHE="/home/buildkite-agent/huggingface/modelscope"
+      mkdir -p "${MODELSCOPE_CACHE}"
+
+      # --- vLLM cache directories (stored in HuggingFace cache) ---
+      echo "Setting up vLLM caches"
+      export VLLM_CACHE_ROOT="/home/buildkite-agent/huggingface/vllm-cache"
+      export VLLM_TEST_CACHE="/home/buildkite-agent/huggingface/vllm-test-cache"
+      export VLLM_MEDIA_CACHE="/home/buildkite-agent/huggingface/vllm-cache/media_cache"
+      mkdir -p "${VLLM_CACHE_ROOT}" "${VLLM_TEST_CACHE}" "${VLLM_MEDIA_CACHE}"
+
+      # --- Patch run-amd-test.sh to pass cache env vars into inner Docker ---
+      SCRIPT_PATH="$(find /workspace/build -name run-amd-test.sh 2>/dev/null | head -1)"
+      if [ -n "${SCRIPT_PATH}" ] && ! grep -q MODELSCOPE_CACHE "${SCRIPT_PATH}"; then
+        echo "Patching run-amd-test.sh to pass cache env vars into inner Docker container"
+        sudo sed -i 's|-e "HF_HOME=${HF_MOUNT}"|-e "HF_HOME=${HF_MOUNT}" \\\n    -e "MODELSCOPE_CACHE=/root/.cache/huggingface/modelscope" \\\n    -e "VLLM_CACHE_ROOT=/root/.cache/huggingface/vllm-cache" \\\n    -e "VLLM_TEST_CACHE=/root/.cache/huggingface/vllm-test-cache" \\\n    -e "VLLM_MEDIA_CACHE=/root/.cache/huggingface/vllm-cache/media_cache"|' "${SCRIPT_PATH}" 2>/dev/null && \
+          echo "Patched successfully" || \
+          echo "WARNING: Failed to patch run-amd-test.sh"
+      fi
+
+      # --- Docker image pull (amd-ci / ci pipelines only) ---
+      if [ "${BUILDKITE_PIPELINE_SLUG}" = "amd-ci" ] || [ "${BUILDKITE_PIPELINE_SLUG}" = "ci" ]; then
+        IMAGE="rocm/vllm-ci:${BUILDKITE_COMMIT}"
+        LOCAL_BASE="/cached/docker-cache/base.tar"
+
+        if docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+          echo "Image ${IMAGE} already loaded in Docker"
+        else
+          # Load base image for layer reuse (reduces 28 GB pull to ~3-5 GB diff)
+          if ! docker images rocm/vllm-dev --format "{{.Tag}}" 2>/dev/null | grep -q "base"; then
+            if [ -f "${LOCAL_BASE}" ]; then
+              docker load -i "${LOCAL_BASE}" >/dev/null 2>&1 && echo "Base layers loaded" || true
+            fi
+          fi
+          docker pull "${IMAGE}"
+        fi
+      else
+        echo "Skipping rocm/vllm-ci pull (pipeline slug: ${BUILDKITE_PIPELINE_SLUG})"
+      fi
+    fi
+  agent-shutdown: |-
+    #!/bin/bash
+    pids=$(ps aux | grep -i vllm | grep -v grep | awk '{print $2}')
+    echo "$pids"
+    rocm-smi --showpids 2>/dev/null
+    if [ -z "$pids" ]; then
+      echo "No vllm processes found."
+      exit 0
+    fi
+    echo "Killing the following PIDs:"
+    kill $pids
+    pkill -f dockerd &
+    pkill -f sh

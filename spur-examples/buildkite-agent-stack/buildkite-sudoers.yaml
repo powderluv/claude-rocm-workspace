@@ -1,0 +1,11 @@
+# Grants the buildkite-agent user passwordless sudo (the hooks + bootstrap do sudo chmod/chown/sed/
+# tee/mkdir). Mounted at /etc/sudoers.d/buildkite-agent (subPath buildkite-agent), mode 0440.
+# Standard content — replace with the reference's exact sudoers if it is more restrictive.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkite-sudoers
+  namespace: buildkite
+data:
+  buildkite-agent: |
+    buildkite-agent ALL=(ALL) NOPASSWD:ALL

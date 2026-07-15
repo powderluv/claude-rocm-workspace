@@ -1,0 +1,51 @@
+# Token-independent validation of the RISKIEST piece of the full vLLM dind config: privileged
+# docker-in-docker on these k0s nodes + nested device passthrough. Mirrors the job pod's dind
+# sidecar (docker:dind privileged, DOCKER_TLS_CERTDIR="", shared /var/run, /var/lib/docker on the
+# /mnt scratch hostPath) and a CLI container that waits for the daemon then does the exact thing
+# run-amd-test.sh needs: `docker run --device /dev/kfd --device /dev/dri ...` INSIDE dind.
+# PASS = "PASSTHROUGH_OK". Run: kubectl -n buildkite apply -f dind-smoke.yaml; then logs main.
+# EDIT FOR YOUR CLUSTER: change /mnt/m2m_nobackup below to your node's scratch mount.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dind-smoke
+  namespace: buildkite
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    spur.amd.com/compute: "true"
+  shareProcessNamespace: true
+  containers:
+    - name: dind
+      image: docker:dind
+      securityContext:
+        privileged: true
+      env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+      volumeMounts:
+        - { name: docker-socket, mountPath: /var/run }
+        - { name: docker-data, mountPath: /var/lib/docker }
+    - name: main
+      image: docker:cli
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          echo "waiting for dockerd..."
+          for i in $(seq 1 40); do docker info >/dev/null 2>&1 && break; sleep 3; done
+          if ! docker info >/dev/null 2>&1; then echo "DIND_FAILED_TO_START"; exit 1; fi
+          echo "=== dind up: server $(docker version --format '{{.Server.Version}}') ==="
+          echo "=== nested device passthrough (what run-amd-test.sh does) ==="
+          if docker run --rm --device /dev/kfd --device /dev/dri alpine \
+               sh -c 'ls -l /dev/kfd && ls /dev/dri'; then
+            echo "PASSTHROUGH_OK"
+          else
+            echo "PASSTHROUGH_FAIL"; exit 1
+          fi
+      volumeMounts:
+        - { name: docker-socket, mountPath: /var/run }
+  volumes:
+    - name: docker-socket
+      emptyDir: {}
+    - name: docker-data
+      hostPath: { path: /mnt/m2m_nobackup/bk-dind-smoke, type: DirectoryOrCreate }

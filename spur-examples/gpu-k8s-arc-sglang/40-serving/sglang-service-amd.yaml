@@ -27,10 +27,10 @@ spec:
       nodeSelector: { spur.amd.com/compute: "true" }
       securityContext:
         seccompProfile: { type: Unconfined }      # ROCm needs unconfined seccomp
-        supplementalGroups: [44, 109]             # video, render GIDs — VERIFY on the host (getent group video render)
+        supplementalGroups: [44, 992]             # video=44, render=992 (VERIFIED on the MI355X hosts; /dev/kfd is root:render)
       containers:
         - name: sglang
-          image: rocm/sgl-dev:PINNED-mi35x-tag    # gfx950 image; PIN by digest in versions.lock.md
+          image: lmsysorg/sglang:v0.5.14-rocm700-mi35x   # gfx950 image (same one M5-full CI validated); PIN by digest in versions.lock.md
           command: ["python3", "-m", "sglang.launch_server"]   # override ENTRYPOINT explicitly (matches upstream)
           args:
             - "--model-path=Qwen/Qwen2.5-7B-Instruct"   # ungated default (no HF gating); change as needed
@@ -50,15 +50,18 @@ spec:
           startupProbe:                                   # gate liveness during cold load (/health is 503 until Up)
             httpGet: { path: /health, port: 30000 }
             periodSeconds: 15
+            timeoutSeconds: 10                            # default 1s is too tight for a GPU server under load
             failureThreshold: 80                          # ~20 min worst-case cold 7B load onto an empty PVC
           readinessProbe:
             httpGet: { path: /health_generate, port: 30000 }
             initialDelaySeconds: 30
             periodSeconds: 15
+            timeoutSeconds: 10
             failureThreshold: 80
           livenessProbe:
             httpGet: { path: /health, port: 30000 }       # safe: startupProbe holds liveness off until server is Up
             periodSeconds: 30
+            timeoutSeconds: 10                            # a busy /health must not read as "dead" (was killing healthy servers)
             failureThreshold: 6
       volumes:
         - { name: hf-cache, persistentVolumeClaim: { claimName: hf-cache } }

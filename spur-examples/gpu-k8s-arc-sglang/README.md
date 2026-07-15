@@ -13,6 +13,11 @@ scale set for `github.com/powderluv/sglang`) and `40-serving/` (the AMD sglang s
 the fork CI/CD workflow that tests on GPU and auto-deploys on green). Follow it to reproduce the
 whole GitHub-Actions-on-GPU-k8s loop, or swap `40-serving` for a different workload.
 
+**Optional addon — Buildkite CI:** [`../buildkite-agent-stack/`](../buildkite-agent-stack/) runs
+vLLM's (or any) Buildkite jobs as ephemeral GPU pods (via `agent-stack-k8s`) beside ARC on this same
+cluster. Deploy it after the cluster + device-plugin are up; it reuses the same `amd.com/gpu`
+device-plugin, GPU node label, scratch mount, and containerd-on-scratch relocation as this tree.
+
 ## Principles
 
 1. **Declarative first.** Prefer a checked-in manifest / Helm values file / distro config over an
@@ -45,6 +50,22 @@ cluster-deploy/
   teardown.sh           # reverse-order teardown
   Makefile              # up / gpu / arc / serve / down / capture
 ```
+
+## Manual prerequisites (not yet fully scripted — do these on a second cluster)
+
+These are load-bearing steps currently captured in `RUNBOOK.md` narrative rather than in
+`bootstrap.sh`; a second-cluster operator must do them by hand until they're promoted into scripts:
+
+1. **Relocate containerd onto the scratch disk on every worker** *before* pulling images. The runner,
+   `docker:dind`, and model images are tens of GB and will fill a small (~110–123 GiB) root fs →
+   `DiskPressure` eviction. (Same scratch mount the Buildkite addon uses.)
+2. **Publish the ARC runner image.** `ghcr.io/powderluv/sglang-runner:rocm` is `imagePullPolicy: Never`
+   (local-only, never pushed). Either build `30-arc/Dockerfile.runner` and
+   `docker save | k0s ctr -n k8s.io images import` on every worker, or push it to a registry and
+   switch the pull policy to `IfNotPresent` + add a pull secret.
+3. **`50-rdma/` is experimental, not turnkey.** It needs host `iommu=pt` (GRUB drop-in + reboot) and
+   currently hits an unresolved ionic NIC QoS blocker (see `RUNBOOK.md` + the MoRI DI notes). Don't
+   apply it expecting a working 2-node DI on a fresh cluster.
 
 ## How changes get captured during deployment
 

@@ -1,6 +1,6 @@
 # AMD GPU device plugin + node-labeller, adapted from github.com/ROCm/k8s-device-plugin for k0s.
-# The ONLY k0s-specific change vs the upstream manifest: the host device-plugin socket dir is
-# /var/lib/k0s/kubelet/device-plugins (k0s kubelet root), mounted at the path the plugin expects.
+# Device-plugin socket dir is the STANDARD /var/lib/kubelet/device-plugins (verified on hw 2026-07-09:
+# k0s root-dir is /var/lib/k0s/kubelet but the pluginwatcher socket stays at /var/lib/kubelet/device-plugins).
 # Hosts already have the amdgpu kernel driver + ROCm in-box (Ubuntu 24.04 / kernel 6.8), so this is
 # the device-plugin-only path (no driver management / gpu-operator needed).
 # Apply:  kubectl apply -f amd-device-plugin.yaml
@@ -30,7 +30,8 @@ spec:
             - { name: sys, mountPath: /sys }
       volumes:
         - name: dp
-          hostPath: { path: /var/lib/k0s/kubelet/device-plugins }       # …which on k0s is this host dir
+          hostPath: { path: /var/lib/kubelet/device-plugins }           # VERIFIED on hw: k0s keeps the device-plugin
+                                                                # socket at the STANDARD path (root-dir is /var/lib/k0s/kubelet)
         - name: sys
           hostPath: { path: /sys }
 ---

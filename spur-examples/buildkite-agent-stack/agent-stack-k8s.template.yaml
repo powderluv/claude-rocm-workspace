@@ -1,0 +1,188 @@
+# agent-stack-k8s rendered manifests (chart 0.45.0) — VENDORED, no-helm deploy of the SIMPLE
+# dind:false NATIVE lane (= `helm template` of values.yaml). Use this only for a trusted pipeline
+# that emits dind:false steps; vLLM's COMMITTED steps are dind:true and need the FULL config in
+# buildkite-vllm-values.yaml (deploy that with helm — see install.md). Token REFERENCED (not baked)
+# via the `buildkite-agent-token` Secret you create at deploy. Placeholders (one controller per queue):
+#   __RELEASE__ __QUEUE__ __GPU_COUNT__ __MAX_IN_FLIGHT__ and the per-cluster __SCRATCH_ROOT__
+#   (node scratch mount) + __RENDER_GID__ (GID owning /dev/kfd; `getent group render`).
+# Deploy (per queue):
+#   kubectl -n buildkite create secret generic buildkite-agent-token \
+#     --from-literal=BUILDKITE_AGENT_TOKEN=<CLUSTER_AGENT_TOKEN>            # once
+#   sed -e 's/__RELEASE__/bk-amd-mi355-2/g' -e 's/__QUEUE__/amd_mi355_2/g' -e 's/__GPU_COUNT__/2/g' \
+#       -e 's/__MAX_IN_FLIGHT__/8/g' -e 's#__SCRATCH_ROOT__#/mnt/m2m_nobackup#g' -e 's/__RENDER_GID__/992/g' \
+#     agent-stack-k8s.template.yaml | kubectl apply -n buildkite -f -
+#   # OR fully SPUR-native (control-plane node): sed ... | sudo tee \
+#   #   /var/lib/k0s/manifests/buildkite-amd-mi355-2/manifest.yaml   (k0s applies it)
+# Images (controller + ghcr.io/buildkite/agent) pull from ghcr at pod start — NOT vendored; side-load
+# into containerd for air-gap like the runner image. Re-render: helm template -f values.yaml.
+---
+# Source: agent-stack-k8s/templates/rbac.yaml.tpl
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: __RELEASE__-agent-stack-k8s-controller
+  namespace: buildkite
+
+---
+# Source: agent-stack-k8s/templates/config.yaml.tpl
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: __RELEASE__-agent-stack-k8s-config
+  namespace: buildkite
+data:
+  config.yaml: |
+    agent-token-secret: buildkite-agent-token
+    namespace: buildkite
+    id: __RELEASE__-agent-stack-k8s
+    enable-completion-watcher: true
+    image: ghcr.io/buildkite/agent@sha256:410e4e4b17dd3f97b5e05ec1669e86ffa8e4a11f4446c61e31ff013b28766ebe
+    max-in-flight: __MAX_IN_FLIGHT__
+    pod-pending-timeout: 15m
+    pod-spec-patch:
+      containers:
+      - name: container-0
+        resources:
+          limits:
+            amd.com/gpu: __GPU_COUNT__
+        volumeMounts:
+        - mountPath: /dev/shm
+          name: devshm
+        - mountPath: /root/.cache/huggingface
+          name: hf-cache
+      nodeSelector:
+        spur.amd.com/compute: "true"
+      securityContext:
+        seccompProfile:
+          type: Unconfined
+        supplementalGroups:
+        - 44
+        - __RENDER_GID__
+      volumes:
+      - emptyDir:
+          medium: Memory
+          sizeLimit: 16Gi
+        name: devshm
+      - hostPath:
+          path: __SCRATCH_ROOT__/hf-cache
+          type: DirectoryOrCreate
+        name: hf-cache
+    prohibit-kubernetes-plugin: false
+    prometheus-port: 9216
+    reservation-expiry-seconds: 900
+    tags:
+    - queue=__QUEUE__
+
+---
+# Source: agent-stack-k8s/templates/rbac.yaml.tpl
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: __RELEASE__-agent-stack-k8s-controller
+  namespace: buildkite
+rules:
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - podtemplates
+      - secrets
+    verbs:
+      - get
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - list
+---
+# Source: agent-stack-k8s/templates/rbac.yaml.tpl
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: __RELEASE__-agent-stack-k8s
+  namespace: buildkite
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: __RELEASE__-agent-stack-k8s-controller
+subjects:
+  - kind: ServiceAccount
+    name: __RELEASE__-agent-stack-k8s-controller
+    namespace: buildkite
+---
+# Source: agent-stack-k8s/templates/deployment.yaml.tpl
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: __RELEASE__-agent-stack-k8s
+  namespace: buildkite
+spec:
+  selector:
+    matchLabels:
+        app: __RELEASE__-agent-stack-k8s
+  template:
+    metadata:
+      labels:
+        app: __RELEASE__-agent-stack-k8s
+      # (helm's checksum/config + checksum/secrets annotations dropped — they were frozen from
+      # cluster-1's render and don't match the placeholder config; re-render with `helm template`
+      # if you want config-change auto-restart.)
+    spec:
+      serviceAccountName: __RELEASE__-agent-stack-k8s-controller
+      nodeSelector:
+        {}
+      tolerations:
+        []
+      containers:
+      - name: controller
+        terminationMessagePolicy: FallbackToLogsOnError
+        image: ghcr.io/buildkite/agent-stack-k8s/controller:0.45.0@sha256:82ff9283870b51cb518ccf7b02d5cd422bcb1fba383a1833888a3cdb6db86cb9
+        env:
+        - name: CONFIG
+          value: /etc/config.yaml
+        envFrom:
+          - secretRef:
+              name: buildkite-agent-token
+        volumeMounts:
+          - name: config
+            mountPath: /etc/config.yaml
+            subPath: config.yaml
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        ports:
+          - name: metrics
+            containerPort: 9216
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+      volumes:
+        - name: config
+          configMap:
+            name: __RELEASE__-agent-stack-k8s-config

@@ -12,11 +12,12 @@ maxRunners: 1
 
 template:
   spec:
+    nodeSelector: { spur.amd.com/compute: "true" }  # schedule on a worker (only workers run a kubelet)
     serviceAccountName: sglang-deployer            # SA lives in arc-runners; RoleBinding in sglang ns
     automountServiceAccountToken: true
-    imagePullSecrets: [{ name: ghcr-pull }]
     containers:
       - name: runner
-        image: ghcr.io/powderluv/sglang-runner:rocm   # same image (has kubectl baked in)
+        image: ghcr.io/powderluv/sglang-runner:rocm   # same local image (Never); has kubectl baked in
+        imagePullPolicy: Never                        # built + imported to containerd on each node (no ghcr pull)
         command: ["/home/runner/run.sh"]
         # no resources.limits.amd.com/gpu  -> schedules without holding a GPU

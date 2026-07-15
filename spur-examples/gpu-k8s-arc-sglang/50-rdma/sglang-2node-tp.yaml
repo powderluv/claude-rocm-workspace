@@ -33,10 +33,10 @@ spec:
       nodeSelector: { spur.amd.com/compute: "true" }
       securityContext:
         seccompProfile: { type: Unconfined }
-        supplementalGroups: [44, 109]   # video, render — VERIFY GIDs on host
+        supplementalGroups: [44, 992]   # video=44, render=992 (VERIFIED on the MI355X hosts)
       containers:
         - name: sglang
-          image: rocm/sgl-dev:PINNED-mi35x-tag        # must ship RCCL + the RDMA transport
+          image: lmsysorg/sglang:v0.5.14-rocm700-mi35x   # VERIFIED: ships RCCL + ionic RDMA provider; in-pod ibv_devinfo -> ionic_0..7 PORT_ACTIVE
           command: ["/bin/bash", "-lc"]
           args:
             - >
@@ -49,7 +49,7 @@ spec:
           env:
             - { name: NCCL_IB_DISABLE, value: "0" }
             - { name: NCCL_IB_HCA, value: "ionic_0,ionic_1,ionic_2,ionic_3,ionic_4,ionic_5,ionic_6,ionic_7" }
-            - { name: NCCL_IB_GID_INDEX, value: "3" }   # RoCEv2 gid — confirm via show_gids
+            - { name: NCCL_IB_GID_INDEX, value: "1" }   # VERIFIED via show_gids: index 1 = global IPv6 RoCEv2 GID (index 0 = fe80 link-local)
             - { name: NCCL_SOCKET_IFNAME, value: "ens3" } # rendezvous over the frontend/pod net, not RoCE
             - { name: NCCL_IB_PCI_RELAXED_ORDERING, value: "1" }
           resources:
