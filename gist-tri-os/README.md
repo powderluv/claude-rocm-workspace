@@ -7,7 +7,7 @@ OSes that lack the usual ROCm/KFD kernel path:
 
 - **macOS** (Apple Silicon) — AMD eGPU over Thunderbolt, via a DriverKit DEXT (no kernel driver).
 - **Linux** (x86) — `amdgpu_lite` minimal kernel shim + a userspace bring-up.
-- **Windows** — C++ ROCr `WindowsLiteDriver` over `wddm_lite`/`D3DKMTEscape` (production `amdgpu_wddm` KMD), linked into `amdhip64_7.dll`; a **torch one-liner runs** on gfx1201 and the **MES-backed compute queue is HW-validated** — open on the gfx12 scratch wave (#57).
+- **Windows** — C++ ROCr `WindowsLiteDriver` over `wddm_lite`/`D3DKMTEscape` (production `amdgpu_wddm` KMD), linked into `amdhip64_7.dll`; **torch smoke 9/9 single-process and 9/9 per-test isolate / multi-process** on gfx1201 (matmul/GEMM, elementwise, transpose, dot, matrix-vector) with the **MES-backed compute queue HW-validated**, the gfx12 scratch wave resolved (#62), and per-process re-bring-up fixed + default-on (#66). Only the separate MCDM-KMD track remains blocked (`dxgmms2` VidMm init, §6).
 
 End goal: PyTorch unit tests passing on gfx1201 via the `lite::` path on all three. This
 gist is the *recreate-the-builds + ramp-up* pointer and is kept updated over time.
@@ -17,21 +17,27 @@ gist is the *recreate-the-builds + ramp-up* pointer and is kept updated over tim
 > references (an x86 validation host `shark-a`, an iBoot PDU, a BMC) are placeholders;
 > credentials/IPs are redacted.
 
-## Status at a glance (2026-07-06)
+## Status at a glance (2026-07-21)
+
+Branches (forks): `powderluv/rocm-systems` @ `a6de5ec13c` (`users/powderluv/macos-os-darwin`),
+`powderluv/TheRock` @ `61159fb9a` (submodule → `a6de5ec13c`),
+`powderluv/rocm-libraries` @ `01960882c8c` (`users/powderluv/macos-egpu` — MIOpen).
 
 | OS | State |
 |---|---|
-| **macOS eGPU** | ROCm SDK + ROCr (`lite::`+macOS backend) + a PyTorch wheel build & link; **12 non-scratch torch ops run on gfx1201** (incl. matmul + reductions). Open: gfx12 scratch (#15/#24), intermittent single-HQD dispatch flakiness under torch (#19). |
-| **Linux (shark-a)** | `lite::` reaches **BOOTLOAD_COMPLETE → MES engine → direct-MEC real compute wave + 1025 sustained dispatches**; committed (`916f4935b`…`c7cc6565c`) and **re-verified working 2026-06-14** (clean reboot → `insmod amdgpu_lite` → `BOOTLOAD_STATUS=0x8000003f` → DIRECT-MEC NOP+fence). |
-| **Windows** | **The C++ ROCr `WindowsLiteDriver` path now reaches PyTorch — a torch one-liner runs on gfx1201 via ROCr statically linked into `amdhip64_7.dll`** (lite:: direct-queue over `wddm_lite`/`D3DKMTEscape` against the production `amdgpu_wddm` KMD; foundation `be9b89171`). **MES-backed compute queue + scheduler ring: SOLVED and HW-validated 2026-06-23** (was blocked on all three OSes) — the gfx1201 MES schedules + dispatches a compute queue end-to-end on Windows via 3 fixes (start the MES engine on the driver path, skip the firmware HQD reclaim on the MES path, activate the scheduler-ring HQD image-only before `MAP_SCHEDULER`); doorbell is dead under WDDM/passthrough so the wptr is MMIO-poked (`ROCR_WINDOWS_MES_MMIO_WPTR=1`). Non-scratch dispatches retire through an EOP `RELEASE_MEM` completion fence; a 1024-dword ring-wrap CP halt is fixed (`kDirectComputeRingSize` 0x1000→0x8000). Committed `b30a8d5c53` (`powderluv/rocm-systems`, Windows-only / env-gated default-off). **Open (#57, = macOS #15 core):** the register-spilling GEMM wave (gfx12 architected flat scratch) does not retire — torch matmul stalls; nine hypotheses ruled out on HW, residual is the per-queue MQD scratch state the SPI sources FLAT_SCRATCH from. The earlier userspace `amd_gpu_driver` bring-up (cold boot → shader dispatch, `f2b12969c`) still stands; the `amdgpu_mcdm` custom KMD remains blocked at `dxgmms2` VidMm init (§6) and this path does not depend on it. |
+| **macOS eGPU** | Full ROCm SDK + ROCr (`lite::`+macOS backend) + a PyTorch wheel build & link. **torch smoke 13/14 on gfx1201** — every GPU op passes: matmul/GEMM, elementwise, reductions, dot, matrix-vector, register-spilling **scratch**, and **conv** (single-process **and** 14-process isolate, **no wedges**). Blockers fixed this run: **scratch (#15)** — a per-dispatch `RESOURCE_LIMITS` PM4 block re-zeroed `COMPUTE_TMPRING_SIZE` (register-aliasing); fixed + default-on (`bcea652b27`). **multi-dispatch / queue reliability (#19)** — coherent-DART-DMA for tensors+queue memory + a `DestroyDirectQueue` doorbell-clear so multi-process needs no `SKIP_DESTROY` leak (`d9e8af0332`). **conv/MIOpen (#65)** — two `.so`-vs-`.dylib` macOS port bugs: HIPRTC `findIsa` `dlopen`'d `libamdhip64.so.7` (ELF) instead of `.dylib` → runtime compiles had no target arch ("Please provide architecture"); and MIOpen's `dynamic_library_postfix` was `.so` so the CK grouped-conv loader missed `libMIOpenCKGroupedConv_gfx1201.dylib`. Fixed in clr (`2b802b3a64`) and MIOpen (`01960882c8c`). **MES-backed path** also validated as an opt-in alternative to the default direct path (`ROCR_MACOS_USE_MES_QUEUE=1`): multi-process/isolate torch was wedging cross-process (2nd process hangs — the same MES scheduler-ring HQD `status=4096` as Windows #66), fixed by porting the #66 scheduler-HQD teardown-at-exit to macOS (`525d9fa653`; `#if defined(_WIN32) || defined(__APPLE__)`) → **MES isolate 9/9** (was 0/9), 5/5 sequential procs. **Open:** only `test_openblas_is_selected_blas` (the macOS torch build isn't OpenBLAS — GPU-independent; LAPACK works). |
+| **Linux (shark-a)** | `lite::` reaches **BOOTLOAD_COMPLETE → MES engine → direct-MEC real compute wave + 1025 sustained dispatches**; committed (`916f4935b`…`c7cc6565c`) and re-verified working (clean reboot → `insmod amdgpu_lite` → `BOOTLOAD_STATUS=0x8000003f` → DIRECT-MEC NOP+fence). |
+| **Windows** | **torch matmul computes end-to-end + exits cleanly** via ROCr `WindowsLiteDriver` over `wddm_lite`/`D3DKMTEscape` (production `amdgpu_wddm` KMD), statically linked into `amdhip64_7.dll`. **MES-backed compute queue + scheduler ring SOLVED** (start MES on the driver path, skip the firmware HQD reclaim, activate the scheduler-ring HQD image-only before `MAP_SCHEDULER`; doorbell dead under WDDM → wptr MMIO-poked `ROCR_WINDOWS_MES_MMIO_WPTR=1`). **~14-dispatch ceiling (#62) FIXED** — it was a HQD `QUEUE_SIZE` (9=1024dw) vs 8192dw ring mismatch; deriving QUEUE_SIZE from the ring retired 150/150 register-spilling dispatches, so **the scratch GEMM now computes** (the old "#57 scratch stall" is resolved). **teardown hang (#63) FIXED** — at process exit torch's fatbin dtor spun forever in `SyncAllStreams→HostQueue::finish` because Windows kills the completion threads before onexit; skip the drain when `RtlDllShutdownInProgress` (`751e1ba8b5`, default-on). **torch smoke 9/9 single-process** — every core GPU op passes: matmul/GEMM, batch-mm, `@`, elementwise, transpose, dot, matrix-vector, matmul-variant. **#64 (the earlier "5 op failures") was a harness artifact, not op bugs** — the 5 ops produce correct values in one process; the failures only appeared in per-test *isolate* mode, where each test is a fresh subprocess. **Per-process re-bring-up (#66) FIXED** — the cross-process wedge was the MES **scheduler-ring HQD** (me=3/pipe=0) left active by the prior process: `hipMalloc` succeeds but the next `hsa_queue_create` fails (`hipErrorInvalidValue`) because the fresh `EnsureMesScheduler`'s dequeue-drain times out on the now-dead ring → scheduler `SET_HW_RESOURCES` never serviced (`status=4096`). Fix: a `std::atexit` hook deactivates this process's scheduler HQD while the MES is still healthy (its drain completes at once → `active=0`), so the next process starts clean — synchronous MMIO on the calling thread, no dead-thread dependency (`a3adf7c6a1`; **default-on on Windows** `a6de5ec13c`, opt out `ROCR_WINDOWS_MES_TEARDOWN_AT_EXIT=0`; macOS/Linux stay opt-in). HW-validated (no env set): **isolate smoke → 9/9 (was 4/9); 6/6 sequential processes; single-process 9/9 with clean exit** (no teardown-path regression) — 16 processes on one power cycle, baseline wedges at #2/#3. Separate MCDM-KMD track still blocked at `dxgmms2` VidMm init (§6), independent. |
 
-**Open blockers:** gfx12 private-segment *scratch* / register-spill wave retirement is now
-the single cross-OS blocker (#15/#24 macOS, #57 Windows) — register + dispatch-base
-programming proven necessary-but-insufficient; the residual is the per-queue MQD scratch
-state the SPI sources each wave's FLAT_SCRATCH from (gfx12 architected flat scratch), which
-stalls torch matmul on both macOS and the Windows MES/direct paths. Also: macOS single-HQD
-dispatch reliability under torch's multi-kernel pattern (#19); and, on the separate MCDM-KMD
-track, the `dxgmms2` VidMm-init crash just past adapter-start.
+**Open blockers (updated 2026-07-21):** on macOS the GPU-side blockers are cleared — gfx12 *scratch*
+(#15), *multi-dispatch/queue reliability* (#19), and *conv/MIOpen* (#65) are all fixed + HW-validated;
+torch smoke is **13/14** with every GPU op working, and the only remaining fail is the GPU-independent
+`test_openblas_is_selected_blas` build-config check. The gfx12 scratch/register-spill blocker is also
+resolved on Windows (HQD `QUEUE_SIZE`/ring fix, #62), and **Windows torch smoke is now 9/9 single-process and 9/9 per-test isolate / multi-process by
+default** — the earlier "5 op failures" (#64) were a per-test-isolate harness artifact, not op bugs
+(the ops compute correct values in one process); the cross-process wedge is fixed by the #66
+`std::atexit` scheduler-HQD teardown (default-on on Windows), so 16 processes run on one power cycle. Remaining: on the
+separate MCDM-KMD track, the `dxgmms2` VidMm-init crash just past adapter-start.
 
 ## Upstream code
 
@@ -46,11 +52,11 @@ track, the `dxgmms2` VidMm-init crash just past adapter-start.
 
 ## lite:: GPU backend — architecture & ramp-up
 
-This section orients a new contributor to the **`lite::`** ROCr GPU backend: the shared, firmware-light direct-queue / MES dispatch layer used to drive **gfx1201 (RDNA4)** GPUs across macOS, Linux, and (planned) Windows, without the traditional KFD kernel driver. All file paths are absolute.
+This section orients a new contributor to the **`lite::`** ROCr GPU backend: the shared, firmware-light direct-queue / MES dispatch layer used to drive **gfx1201 (RDNA4)** GPUs across macOS, Linux, and Windows, without the traditional KFD kernel driver. All file paths are absolute.
 
 ### 1. What "lite::" is, and why
 
-`lite::` (`rocr::AMD::lite`) is a **shared, OS-agnostic ROCr backend** that programs an AMD GPU's compute queue (MEC HQD or MES-mapped queue) *directly from userspace*, instead of going through `libhsakmt` and the Linux `amdgpu`/KFD kernel driver. It exists because the macOS eGPU port has **no kernel-mode GPU driver** — the GPU is reached through a DriverKit DEXT for MMIO/BAR/DMA only — so ROCr must build the queue's MQD, ring, doorbell and (optionally) drive the MES scheduler itself. The same logic is reused on Linux (`amdgpu`-lite, talking DRM ioctls directly) and is the intended path for Windows, so the three OSes converge on one queue implementation.
+`lite::` (`rocr::AMD::lite`) is a **shared, OS-agnostic ROCr backend** that programs an AMD GPU's compute queue (MEC HQD or MES-mapped queue) *directly from userspace*, instead of going through `libhsakmt` and the Linux `amdgpu`/KFD kernel driver. It exists because the macOS eGPU port has **no kernel-mode GPU driver** — the GPU is reached through a DriverKit DEXT for MMIO/BAR/DMA only — so ROCr must build the queue's MQD, ring, doorbell and (optionally) drive the MES scheduler itself. The same logic is reused on Linux (`amdgpu`-lite, talking DRM ioctls directly) and on Windows (the C++ `WindowsLiteDriver` over `wddm_lite`/`D3DKMTEscape`), so the three OSes converge on one queue implementation.
 
 The core of the shared layer is one file plus its header:
 
@@ -119,7 +125,7 @@ ROCr's `lite::` backend *attaches to an already-initialized GPU*. The one-time-p
 
 ## Build & run on macOS (Apple Silicon, AMD eGPU, gfx1201)
 
-> Status (honest): This is a research bring-up, not a supported path. The full ROCm SDK, ROCr (with the macOS backend), and a PyTorch wheel **build and link** on macOS arm64, and a curated set of GPU ops runs on a Thunderbolt-attached RX 9070 XT (gfx1201). **Open issues:** register-spilling / "scratch" ops are not yet supported (need #15), and torch dispatch is **intermittently flaky** (non-deterministic `HSA_STATUS_ERROR 0x1000` queue wedges under torch's multi-kernel/stream pattern, see #19). Treat `torch_baseline.py` (12 non-scratch ops) as the validation bar, not a full test suite.
+> Status (honest, 2026-07-19): This is a research bring-up, not a supported path. The full ROCm SDK, ROCr (with the macOS backend), and a PyTorch wheel **build and link** on macOS arm64, and PyTorch runs a broad set of GPU ops on a Thunderbolt-attached RX 9070 XT (gfx1201): **`pytorch_smoke_test.py` = 13/14**, with **every GPU op passing** — matmul/GEMM, elementwise, reductions, dot, matrix-vector, register-spilling **scratch**, **conv**, and multi-dispatch/multi-process (single-process *and* 14-process isolate, no wedges). Scratch (#15), multi-dispatch/queue reliability (#19), and conv/MIOpen (#65) are all fixed (scratch default-on; conv unblocked by two `.so`→`.dylib` macOS port fixes in clr HIPRTC `findIsa` and MIOpen `dynamic_library_postfix`). **Open issue:** only the non-GPU `test_openblas_is_selected_blas` (the build isn't OpenBLAS; LAPACK works). Validation bar: the smoke suite (via `run-torch-egpu.sh`, single-process for a clean count or isolate for crash-tolerance), not just `torch_baseline.py`.
 
 ### 0. Hardware / platform context
 
@@ -284,7 +290,7 @@ Expected first line confirms the eGPU is seen, e.g. `torch 2.13.0a0+git592bfed h
 
 **Other harnesses** (HIP-level, self-driving with the same bring-up/env):
 - `run-multi-dispatch-test.sh [N]` — builds `multi_dispatch_test.cpp` with `hipcc --offload-arch=gfx1201`, launches a kernel N times (default 200) through the lite:: MES path. Used to confirm the queue path is healthy independent of torch.
-- `run-scratch-test.sh` — builds `scratch_test.cpp`, sets the extra `ROCR_MACOS_AQL_ENABLE_SCRATCH=1`, and exercises a register-spilling kernel. **This validates the still-open scratch work (#15);** scratch ops are not part of the passing baseline.
+- `run-scratch-test.sh` — builds `scratch_test.cpp` and exercises a register-spilling kernel over the lite:: path. Scratch (#15) is fixed + HW-validated (default-on, `bcea652b27`), and register-spilling scratch is part of the passing torch smoke suite (13/14); this harness is a HIP-level check of the scratch path independent of torch.
 
 **Diagnostics:** set `TORCH_TRACE=1` (enables `AMD_LOG_LEVEL=4 ROCR_MACOS_TRACE_AQL=1 ROCR_MACOS_TRACE_DIRECT_QUEUE=1 HIP_LAUNCH_BLOCKING=1`) or `TORCH_BLOCKING=1` for `run-torch-egpu.sh`. Note `HIP_LAUNCH_BLOCKING` is **not** a reliable workaround for the intermittent wedge.
 
@@ -468,12 +474,17 @@ git submodule update --init rocm-systems
 >
 > **Update (2026-07-06 — the C++ ROCr path reaches PyTorch):** the Python bring-up above proved the transport; Track C then moved to the **shared C++ ROCr `lite::` backend** (a `WindowsLiteDriver` like the macOS/Linux drivers, over `wddm_lite`/`D3DKMTEscape`), statically linked into **`amdhip64_7.dll`**, so torch talks to real ROCm. Milestones since:
 > - **A torch one-liner runs on gfx1201** through ROCr → `WindowsLiteDriver` → `wddm_lite` (foundation `be9b89171`: the shared lite:: direct-queue dispatches NOP+fence over `wddm_lite`).
-> - **MES-backed compute queue + scheduler ring — SOLVED and HW-validated 2026-06-23** (blocked on all three OSes until then). The gfx1201 MES schedules + maps + dispatches a compute queue end-to-end on Windows. Three fixes: (1) start the MES engine on the ROCr **driver** path (`EnsureMesEngineStartedLocked` → `wddmStartMes`; previously only the standalone harness did, so the map returned `status=4096`); (2) skip the firmware HQD reclaim on the MES path (`MapLegacyQueueWithMes` reprograms the HQD anyway); (3) activate the scheduler-ring HQD **image-only** (no host activate) *before* `MAP_SCHEDULER`, mirroring the proven `direct_activate=False` recipe. The doorbell is dead under WDDM/passthrough, so the wptr is MMIO-poked on `CP_HQD_PQ_WPTR` (`ROCR_WINDOWS_MES_MMIO_WPTR=1`). Requires a **fresh (power-cycled) GPU** — the clean MES state is one-shot per POST; stale MES state masks the fixes.
+> - **MES-backed compute queue + scheduler ring — SOLVED and HW-validated 2026-06-23** (blocked on all three OSes until then). The gfx1201 MES schedules + maps + dispatches a compute queue end-to-end on Windows. Three fixes: (1) start the MES engine on the ROCr **driver** path (`EnsureMesEngineStartedLocked` → `wddmStartMes`; previously only the standalone harness did, so the map returned `status=4096`); (2) skip the firmware HQD reclaim on the MES path (`MapLegacyQueueWithMes` reprograms the HQD anyway); (3) activate the scheduler-ring HQD **image-only** (no host activate) *before* `MAP_SCHEDULER`, mirroring the proven `direct_activate=False` recipe. The doorbell is dead under WDDM/passthrough, so the wptr is MMIO-poked on `CP_HQD_PQ_WPTR` (`ROCR_WINDOWS_MES_MMIO_WPTR=1`). The initial validation used a **fresh (power-cycled) GPU** because stale MES scheduler state masks the fixes; the per-process re-bring-up fix (#66, in the 2026-07-21 update below) later deactivates that scheduler state at process exit, so multiple torch processes run on one power-cycle.
 > - **EOP `RELEASE_MEM` completion fence** (`ROCR_WINDOWS_AQL_EOP_FENCE`, mirroring the wddm_lite scratch recipe): non-scratch dispatches retire through it.
 > - **Ring-wrap CP halt fixed:** `kDirectComputeRingSize` 0x1000 → 0x8000 (the 1024-dword ring wrapped at the first boundary-crossing dispatch and the MES CP halted).
 > - Committed `b30a8d5c53` on `powderluv/rocm-systems` (branch `users/powderluv/macos-os-darwin`). All changes are **Windows-only / env-gated (default-off)**, so macOS and Linux are unaffected.
 >
-> **Open blocker (#57 — the same wall as macOS #15):** the **register-spilling GEMM wave does not retire** (torch matmul stalls; CP parks at the completion, GPU idle, no fault). Nine hypotheses ruled out on hardware (scratch-fault, wptr-poll, remap, missing SH_MEM aperture, ring-wrap [fixed], post-acquire, completion-primitive, MES-mapped-vs-direct-HQD, and scratch-*size* — forcing 1024 B/thread → 4 MB backing still hangs). The residual is **gfx12 architected flat scratch**: the SPI sources each wave's `FLAT_SCRATCH` from **per-queue MQD / `amd_queue_t` scratch state**, not the per-dispatch `COMPUTE_DISPATCH_SCRATCH_BASE` `SET_SH_REG` ROCr emits. Fixing that on any one OS should carry to all three.
+> **Update (2026-07-21 — scratch resolved; torch smoke 9/9 single- and multi-process):**
+> - **~14-dispatch ceiling (#62) FIXED**, which also resolved the earlier "#57 scratch stall": it was a HQD `QUEUE_SIZE` (9 = 1024 dw) vs 8192-dw ring mismatch; deriving `QUEUE_SIZE` from the ring retired 150/150 register-spilling dispatches, so the register-spilling GEMM now computes.
+> - **teardown hang (#63) FIXED** — at process exit torch's fatbin dtor spun forever in `SyncAllStreams→HostQueue::finish` because Windows kills the completion threads before onexit; skip the drain when `RtlDllShutdownInProgress` (`751e1ba8b5`, default-on).
+> - **torch smoke 9/9 single-process** — matmul/GEMM, batch-mm, `@`, elementwise, transpose, dot, matrix-vector, matmul-variant. **#64 (the earlier "5 op failures") was a per-test-*isolate* harness artifact, not op bugs** — the 5 ops produce correct values in one process; the failures only appeared in per-test isolate mode, where each test is a fresh subprocess.
+> - **Per-process re-bring-up (#66) FIXED + default-on.** The cross-process wedge was the MES **scheduler-ring HQD** (me=3/pipe=0) left active by the prior process: `hipMalloc` still succeeds, but the next `hsa_queue_create` fails because the fresh scheduler `SET_HW_RESOURCES` is never serviced (`status=4096`). Fix: a `std::atexit` hook deactivates this process's scheduler HQD while the MES is still healthy (its dequeue-drain completes at once → `active=0`), so the next process starts clean — synchronous MMIO on the calling thread, no dead-thread dependency (unlike #63). `a3adf7c6a1` (opt-in) then `a6de5ec13c` (**default-on on Windows** under `#ifdef _WIN32`; opt out `ROCR_WINDOWS_MES_TEARDOWN_AT_EXIT=0`; macOS/Linux stay opt-in). HW-validated with no env set: **isolate smoke 9/9 (was 4/9), 6/6 sequential processes, single-process 9/9 with a clean exit** — 16 processes on one power-cycle; the `env=0` baseline wedges at #2/#3. So Windows torch runs single-process **and** per-test isolate / multi-process **by default**, and the earlier "MES bring-up is one-shot per power cycle" no longer holds.
+> - **Only remaining Windows blocker:** the separate `amdgpu_mcdm` MCDM-KMD track (`dxgmms2` VidMm init, §6), independent of the working `wddm_lite` path.
 
 ### 1. Host + VM setup (x86 box with a passthrough gfx1201)
 
@@ -545,7 +556,7 @@ Module map:
 
 **Firmware:** `--fw-dir` expects the gfx1201 (GC 12.0.1) firmware `.bin` set the PSP loads (SOS/RLC/MEC/SDMA/MES/SMU), from the AMD/ROCm firmware package. On Linux these ship `.zst` and are decompressed (§Linux 2); on Windows place the plain `.bin` files in the dir.
 
-**ROCm / PyTorch units (the Track C goal):** the **follow-on (#20)** — real compiled kernels (kernargs + scratch) on top of the working bring-up, then a lite-enabled ROCr / PyTorch wheel for the guest. Not built yet.
+**ROCm / PyTorch units (the Track C goal, #20):** real compiled kernels (kernargs + scratch) plus a lite-enabled ROCr / PyTorch — now realized on the C++ ROCr `WindowsLiteDriver` path (linked into `amdhip64_7.dll`, § status update above), which runs the torch smoke 9/9 on gfx1201 single- and multi-process; the Python userspace bring-up here proved the transport.
 
 ### 5. Status: implemented vs planned (userspace path)
 
@@ -559,13 +570,13 @@ Module map:
 | NOP+fence + PM4 `WRITE_DATA` self-tests | **PASS** |
 | 4-level GFXHUB GPUVM page table + compute `s_endpgm` shader dispatch | **PASS** (committed `f2b12969c`) |
 | Generic `WindowsDevice` queue/submit/signal ABC methods | **Stubbed** — the bring-up drives `ring_init` directly instead |
-| Real compiled kernels + kernargs (non-scratch) | **Working** — moved to the C++ ROCr `WindowsLiteDriver` path (§ status update above); torch one-liner runs via `amdhip64_7.dll` |
+| Real compiled kernels + kernargs (non-scratch) | **Working** — moved to the C++ ROCr `WindowsLiteDriver` path (§ status update above); torch smoke 9/9 runs via `amdhip64_7.dll` |
 | MES-backed compute queue + scheduler ring | **Working** — HW-validated 2026-06-23; retires via EOP `RELEASE_MEM` fence (committed `b30a8d5c53`) |
-| Register-spilling kernels + scratch (torch matmul) | **Blocked** (#57) — gfx12 architected-flat-scratch wave doesn't retire (= macOS #15) |
-| PyTorch units via the `lite::` path on Windows | **In progress** (#20) — one-liner passes; matmul gated on scratch (#57) |
+| Register-spilling kernels + scratch (torch matmul) | **Working** (#62) — deriving HQD `QUEUE_SIZE` from the ring retired 150/150 register-spilling dispatches, so the GEMM computes (the old "#57 scratch stall" is resolved) |
+| PyTorch units via the `lite::` path on Windows | **torch smoke 9/9** (#20) — single-process, and per-test isolate / multi-process by default after #66 |
 | (Separate track) `amdgpu_mcdm` custom MCDM KMD | adapter-start contract passed; blocked at `dxgmms2` VidMm init (§6) |
 
-**Bottom line:** two Windows results stand. (1) The Python `amd_gpu_driver` userspace path dispatches a compute shader on gfx1201 from cold boot against stock `amdgpu_wddm` (no custom KMD) — reproducible via `start-gpu-vm.sh` (host) + `run_bringup.bat` (guest). (2) The C++ ROCr `WindowsLiteDriver` (in `amdhip64_7.dll`) now runs a **torch one-liner** on gfx1201, with a **MES-backed compute queue solved and validated on hardware** (committed `b30a8d5c53`). The remaining wall is the gfx12 register-spill **scratch** wave retirement (#57), which is the same blocker as macOS #15.
+**Bottom line:** two Windows results stand. (1) The Python `amd_gpu_driver` userspace path dispatches a compute shader on gfx1201 from cold boot against stock `amdgpu_wddm` (no custom KMD) — reproducible via `start-gpu-vm.sh` (host) + `run_bringup.bat` (guest). (2) The C++ ROCr `WindowsLiteDriver` (in `amdhip64_7.dll`) runs the **torch smoke 9/9** on gfx1201 — single-process and per-test isolate / multi-process by default (#66) — with a **MES-backed compute queue solved and validated on hardware** (committed `b30a8d5c53`) and the gfx12 register-spill **scratch** wave retirement resolved (#62). The only remaining Windows wall is the separate `amdgpu_mcdm` MCDM-KMD track (`dxgmms2` VidMm init, §6).
 
 ### 6. (Separate track) the `amdgpu_mcdm` custom MCDM kernel driver
 
@@ -612,7 +623,7 @@ The adapter-start contract fixes (committed `52d93387`, in `userspace_driver/ker
 - **Reconciled torch eGPU run recipe + env** — `claude-rocm-workspace/run-torch-egpu.sh`
 - **12-op non-scratch torch validation baseline** — `claude-rocm-workspace/torch_baseline.py`
 - **HIP multi-dispatch harness (queue-health check)** — `claude-rocm-workspace/run-multi-dispatch-test.sh`
-- **Scratch-op harness (validates open #15)** — `claude-rocm-workspace/run-scratch-test.sh`
+- **Scratch-op harness (HIP-level scratch-path check; #15 fixed, in the 13/14 smoke suite)** — `claude-rocm-workspace/run-scratch-test.sh`
 - **eGPU power-cycle / re-enumerate (replug replacement)** — `claude-rocm-workspace/egpu-replug.sh`
 - **eGPU bring-up wrapper (replug + phase-9 retry)** — `claude-rocm-workspace/egpu-bringup.sh`
 - **eGPU soft drain** — `claude-rocm-workspace/egpu_drain.py`

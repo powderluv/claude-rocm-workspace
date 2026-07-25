@@ -14,8 +14,13 @@ TORCH_VENV=$ROCK/external-builds/pytorch/.venv-torch
 # ROCr queue + dispatches HIP kernels successfully on the current code).
 export ROCM_PATH=$SDK HIP_PATH=$SDK DYLD_LIBRARY_PATH="$SDK/lib:$SDK/lib/llvm/lib"
 export AMD_GPU_MACOS_FORCE_DIRECT_COMPUTE=1 ROCR_MACOS_HOST_BLIT_ONLY=1 \
-       ROCR_MACOS_AQL_SKIP_HOST_COPYBACK=1 ROCR_MACOS_DIRECT_QUEUE_SKIP_DESTROY=1
-export ROCR_MACOS_USE_MES_QUEUE=1
+       ROCR_MACOS_AQL_SKIP_HOST_COPYBACK=1
+# MES-backed compute path is the DEFAULT (matches the Linux/Windows lite:: path).
+# The per-process / isolate cross-process wedge is fixed by the #66/#67 MES
+# scheduler-HQD teardown (default-on in ROCr), so multi-process torch is robust.
+# Opt into the legacy DIRECT path with ROCR_MACOS_DIRECT=1 (the ROCR gate is
+# presence-based, so this wrapper only exports the var when MES is wanted).
+[ "${ROCR_MACOS_DIRECT:-0}" = "1" ] || export ROCR_MACOS_USE_MES_QUEUE=1
 # Diagnostic trace (set TORCH_TRACE=1 to capture the failing HSA call):
 if [ "${TORCH_TRACE:-0}" = "1" ]; then
   export AMD_LOG_LEVEL=4 ROCR_MACOS_TRACE_AQL=1 ROCR_MACOS_TRACE_DIRECT_QUEUE=1 HIP_LAUNCH_BLOCKING=1
