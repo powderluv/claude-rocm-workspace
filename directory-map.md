@@ -16,19 +16,19 @@ These aliases are used by `/stage-review` and other commands to resolve short na
 
 | Alias | Path | Notes |
 |-------|------|-------|
-| therock | D:\R | Main ROCm build repo |
-| rocm-kpack | D:\R\base\rocm-kpack | Kernel packaging tools (submodule)|
-| rocm-systems | D:\R\rocm-systems | ROCm Systems Superrepo (submodule)|
-| rocm-libraries | D:\R\rocm-libraries | ROCm Libraris Superrepo (submodule) |
-| jax | D:\R\jax | JAX framework |
-| xla | D:\R\xla | XLA compiler |
-| amdgpu | C:\Users\nod\github\amdgpu   | Linux amdgpu driver |
-| workspace | C:\Users\nod\github\claude-rocm-workspace | This meta-workspace |
+| therock | /home/nod/github/TheRock | Main ROCm build repo |
+| rocm-kpack | /home/nod/github/TheRock/base/rocm-kpack | Kernel packaging tools (submodule)|
+| rocm-systems | /home/nod/github/TheRock/rocm-systems | ROCm Systems Superrepo (submodule, default branch: develop)|
+| rocm-libraries | /home/nod/github/TheRock/rocm-libraries | ROCm Libraris Superrepo (submodule) |
+| jax | /home/nod/github/TheRock/jax | JAX framework |
+| xla | /home/nod/github/TheRock/xla | XLA compiler |
+| amdgpu | /home/nod/github/amdgpu   | Linux amdgpu driver |
+| workspace | /home/nod/github/claude-rocm-workspace | This meta-workspace |
 
 ## Build Trees
 
 ### Active Builds
-- **Main build:** `D:\R\therock-build`
+- **Main build:** `/home/nod/github/TheRock/therock-build`
   - Configuration: Release
   - Target architecture: [gfx1201]
   - CMake flags:
@@ -50,7 +50,7 @@ These aliases are used by `/stage-review` and other commands to resolve short na
 |-------|------|-------|
 | remote-therock | /home/anush/github/TheRock | Main ROCm build repo |
 | remote-eocm-kpack | /home/anush/github/TheRock/base/rocm-kpack | Kernel packaging tools (submodule)|
-| remote-rocm-systems | /home/anush/github/TheRock/rocm-systems | ROCm Systems Superrepo (submodule)|
+| remote-rocm-systems | /home/anush/github/TheRock/rocm-systems | ROCm Systems Superrepo (submodule, default branch: develop)|
 | remote-eocm-libraries | /home/anush/github/TheRock/rocm-libraries | ROCm Libraris Superrepo (submodule) |
 | remote-jax | /home/anush/github/TheRock/jax | JAX framework |
 | remote-xla | /home/anush/github/TheRock/xla | XLA compiler |
@@ -58,7 +58,7 @@ These aliases are used by `/stage-review` and other commands to resolve short na
 ## Build Trees
 
 ### Active Builds
-- **Main build:** `D:\R\therock-build`
+- **Main build:** `/home/nod/github/TheRock/therock-build`
   - Configuration: Release
   - Target architecture: [gfx942]
   - CMake flags:
